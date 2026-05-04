@@ -76,6 +76,13 @@
 #define BSP_NTC_VREF_V       2.048f
 #define BSP_NTC_RSERIES_OHM  10000.0f
 
+/* ── Laser diode hardware current limit ──────────────────────────────────────
+ * Absolute max the DAC8562S + driver circuit can deliver (hardware spec).
+ * DAC code 0xFFFF maps to this value. The software limit in laser_control.c
+ * can be set lower via CLI but never exceeds this value.
+ */
+#define BSP_LASER_MAX_CURRENT_A  1.5f
+
 /* ── ADS1220 data rate ───────────────────────────────────────────────────────
  * 0x00 → 20 SPS: lowest noise, best for 5 mK stability requirement.
  * Increase to 0x20 (90 SPS) if faster response is needed during tuning.

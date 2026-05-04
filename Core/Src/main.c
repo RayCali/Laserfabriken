@@ -25,6 +25,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "tec_control.h"
+#include "laser_control.h"
 #include "cli.h"
 /* USER CODE END Includes */
 
@@ -94,6 +95,7 @@ int main(void)
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
   TEC_Control_Init();
+  Laser_Control_Init();
   CLI_Init();
   /* USER CODE END 2 */
 

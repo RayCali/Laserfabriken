@@ -1,6 +1,7 @@
 #include "cli.h"
 #include "bsp_config.h"
 #include "tec_control.h"
+#include "laser_control.h"
 #include "stm32f4xx_hal.h"
 #include <string.h>
 #include <stdio.h>
@@ -44,14 +45,18 @@ static void process_line(char *line)
     /* help */
     if (strcmp(line, "help") == 0) {
         cli_send("Commands:\r\n"
-                 "  set crystal.kp       <val>\r\n"
-                 "  set crystal.ki       <val>\r\n"
-                 "  set crystal.kd       <val>\r\n"
-                 "  set crystal.setpoint <val>\r\n"
-                 "  set laser.kp         <val>\r\n"
-                 "  set laser.ki         <val>\r\n"
-                 "  set laser.kd         <val>\r\n"
-                 "  set laser.setpoint   <val>\r\n"
+                 "  set crystal.kp         <val>\r\n"
+                 "  set crystal.ki         <val>\r\n"
+                 "  set crystal.kd         <val>\r\n"
+                 "  set crystal.setpoint   <val>  (C)\r\n"
+                 "  set laser.kp           <val>\r\n"
+                 "  set laser.ki           <val>\r\n"
+                 "  set laser.kd           <val>\r\n"
+                 "  set laser.setpoint     <val>  (C)\r\n"
+                 "  set laser.current      <val>  (A)\r\n"
+                 "  set laser.maxcurrent   <val>  (A)\r\n"
+                 "  laser on\r\n"
+                 "  laser off\r\n"
                  "  status\r\n"
                  "  help\r\n");
         return;
@@ -62,7 +67,7 @@ static void process_line(char *line)
         float temp, output;
 
         TEC_Control_GetState(TEC_CRYSTAL, &temp, &output);
-        cli_sendf("Crystal: T=%7.4f C  SP=%7.4f  out=%+6.4f"
+        cli_sendf("Crystal TEC: T=%7.4f C  SP=%7.4f  out=%+6.4f"
                   "  Kp=%.4f  Ki=%.6f  Kd=%.4f\r\n",
                   (double)temp,
                   (double)g_crystal_pid.setpoint,
@@ -72,7 +77,7 @@ static void process_line(char *line)
                   (double)g_crystal_pid.Kd);
 
         TEC_Control_GetState(TEC_LASER, &temp, &output);
-        cli_sendf("Laser:   T=%7.4f C  SP=%7.4f  out=%+6.4f"
+        cli_sendf("Laser  TEC: T=%7.4f C  SP=%7.4f  out=%+6.4f"
                   "  Kp=%.4f  Ki=%.6f  Kd=%.4f\r\n",
                   (double)temp,
                   (double)g_laser_pid.setpoint,
@@ -80,13 +85,44 @@ static void process_line(char *line)
                   (double)g_laser_pid.Kp,
                   (double)g_laser_pid.Ki,
                   (double)g_laser_pid.Kd);
+
+        const LaserState_t *ls = Laser_Control_GetState();
+        cli_sendf("Laser diode: I=%.4f A  Imax=%.4f A  %s\r\n",
+                  (double)ls->current_A,
+                  (double)ls->max_current_A,
+                  ls->enabled ? "ON" : "OFF");
         return;
     }
 
-    /* set <channel>.<param> <value> */
+    /* laser on / laser off */
+    if (strcmp(line, "laser on") == 0) {
+        Laser_Control_Enable();
+        cli_send("OK laser enabled\r\n");
+        return;
+    }
+    if (strcmp(line, "laser off") == 0) {
+        Laser_Control_Disable();
+        cli_send("OK laser disabled\r\n");
+        return;
+    }
+
+    /* set <param> <value> */
     char param[32], value_str[16];
     if (sscanf(line, "set %31s %15s", param, value_str) == 2) {
         float val = strtof(value_str, NULL);
+
+        /* Laser diode current control (checked before TEC PID to avoid ambiguity) */
+        if (strcmp(param, "laser.current") == 0) {
+            Laser_Control_SetCurrent(val);
+            cli_sendf("OK laser.current = %.4f A\r\n", (double)val);
+            return;
+        }
+        if (strcmp(param, "laser.maxcurrent") == 0) {
+            Laser_Control_SetMaxCurrent(val);
+            cli_sendf("OK laser.maxcurrent = %.4f A\r\n", (double)val);
+            return;
+        }
+        /* TEC PID params */
         PID_t *pid = NULL;
         const char *param_name = NULL;
 

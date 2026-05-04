@@ -49,6 +49,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/app/cli.c
     Core/Src/bsp/bsp_temp.c
     Core/Src/bsp/bsp_tec.c
+    Core/Src/bsp/bsp_laser.c
+    Core/Src/app/laser_control.c
 )
 
 # Add include paths

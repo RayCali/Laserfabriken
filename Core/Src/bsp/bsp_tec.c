@@ -4,12 +4,16 @@
 #include <stdint.h>
 
 /*
- * DRV8873S control — SPI Mode 0 (CPOL=0, CPHA=0), same as the default SPI
- * configuration. No mode switching needed (unlike ADS1220).
+ * DRV8873S control — SPI Mode 0 (CPOL=0, CPHA=0).
  *
- * Direction is controlled via IN1/IN2 GPIOs — fully functional now.
- * Amplitude is controlled via DAC8562S (16-bit SPI DAC) — stub until SPI
- * transactions are wired up (see TODO comments below).
+ * Direction: IN1/IN2 GPIOs — fully functional now.
+ * Amplitude: STM32 internal DAC (ch1 = Crystal, ch2 = Laser TEC).
+ *   DAC8562S is NOT used here — it is only for laser diode current (bsp_laser.c).
+ *
+ * TODO: Enable DAC1 in CubeMX (.ioc):
+ *   - OUT1 (PA4) → Crystal TEC amplitude
+ *   - OUT2 (PA5) → Laser TEC amplitude
+ *   Then include dac.h and uncomment HAL_DAC calls below.
  */
 
 /* ── Per-channel hardware description ────────────────────────────────────── */
@@ -57,25 +61,15 @@ static void drv_write_reg(TecChannel_t ch, uint8_t reg, uint8_t val)
     HAL_GPIO_WritePin(s_drv[ch].cs_port, s_drv[ch].cs_pin, GPIO_PIN_SET);
 }
 
-/* ── DAC8562S write (Mode 0, 24-bit frame) ───────────────────────────────── */
-/*
- * DAC8562S command byte: [23:19] CMD, [18:16] DAC select, [15:0] data (16-bit)
- * CMD = 011 → write and update DAC register
- * DAC select: 000 = DAC A (channel 0 / crystal), 001 = DAC B (laser)
- */
-static void dac_set(TecChannel_t ch, uint16_t code)
+/* ── STM32 internal DAC (12-bit, ch1 = Crystal TEC, ch2 = Laser TEC) ─────── */
+static void internal_dac_set(TecChannel_t ch, uint16_t code_12bit)
 {
-    uint8_t tx[3] = {
-        (uint8_t)(0x18u | (uint8_t)ch), /* 0x18=write+update DAC A, 0x19=DAC B */
-        (uint8_t)(code >> 8),
-        (uint8_t)(code & 0xFFu)
-    };
-    HAL_GPIO_WritePin(BSP_DAC_CS_PORT, BSP_DAC_CS_PIN, GPIO_PIN_RESET);
-    /* TODO: DAC8562S SPI — uncomment when SPI is wired:
-     *   HAL_SPI_Transmit(BSP_SPI_BUS, tx, 3, 10);
+    /* TODO: Enable DAC1 in CubeMX (.ioc) and include dac.h, then uncomment:
+     *   uint32_t dac_ch = (ch == TEC_CRYSTAL) ? DAC_CHANNEL_1 : DAC_CHANNEL_2;
+     *   HAL_DAC_SetValue(&hdac, dac_ch, DAC_ALIGN_12B_R, code_12bit);
+     *   HAL_DAC_Start(&hdac, dac_ch);
      */
-    (void)tx;
-    HAL_GPIO_WritePin(BSP_DAC_CS_PORT, BSP_DAC_CS_PIN, GPIO_PIN_SET);
+    (void)ch; (void)code_12bit;
 }
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
@@ -100,7 +94,7 @@ void BSP_TEC_Init(TecChannel_t ch)
     (void)drv_write_reg; /* suppress unused-function warning until TODOs filled */
 
     /* Set DAC to 0 output initially */
-    dac_set(ch, 0);
+    internal_dac_set(ch, 0);
 }
 
 void BSP_TEC_SetOutput(TecChannel_t ch, float value)
@@ -123,9 +117,9 @@ void BSP_TEC_SetOutput(TecChannel_t ch, float value)
         value = -value; /* magnitude for DAC */
     }
 
-    /* Map [0.0, 1.0] → [0, 65535] DAC code */
-    uint16_t dac_code = (uint16_t)(value * 65535.0f);
-    dac_set(ch, dac_code);
+    /* Map [0.0, 1.0] → [0, 4095] for 12-bit internal DAC */
+    uint16_t dac_code = (uint16_t)(value * 4095.0f);
+    internal_dac_set(ch, dac_code);
 }
 
 void BSP_TEC_Disable(TecChannel_t ch)
@@ -133,6 +127,6 @@ void BSP_TEC_Disable(TecChannel_t ch)
     /* Coast the H-bridge first, then pull nSLEEP low */
     HAL_GPIO_WritePin(s_drv[ch].in1_port, s_drv[ch].in1_pin, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(s_drv[ch].in2_port, s_drv[ch].in2_pin, GPIO_PIN_RESET);
-    dac_set(ch, 0);
+    internal_dac_set(ch, 0);
     HAL_GPIO_WritePin(s_drv[ch].nsleep_port, s_drv[ch].nsleep_pin, GPIO_PIN_RESET);
 }
