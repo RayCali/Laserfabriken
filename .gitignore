@@ -1,0 +1,21 @@
+# Build output
+build/
+
+# STM32CubeMX generated (keep .ioc but ignore backups)
+*.ioc.bak
+
+# VS Code
+.vscode/
+
+# Compiler artifacts
+*.o
+*.d
+*.su
+*.elf
+*.bin
+*.hex
+*.map
+
+# System
+.DS_Store
+Thumbs.db
