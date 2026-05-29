@@ -3,9 +3,23 @@
 
 LaserState_t g_laser_state = {
     .current_A     = 0.0f,
-    .max_current_A = 1.5f,  /* default software limit — change via CLI */
+    .max_current_A = 2.0f,   /* default software limit — change via CLI */
+    .threshold_A   = 0.1f,   /* lasing threshold — no output below this */
+    .power_pct     = 0,
     .enabled       = 0,
 };
+
+/* Reverse-map current → power_pct so both fields stay in sync. */
+static uint8_t current_to_pct(float amps)
+{
+    if (amps <= 0.0f) return 0;
+    float range = g_laser_state.max_current_A - g_laser_state.threshold_A;
+    if (range <= 0.0f) return 0;
+    int pct = (int)((amps - g_laser_state.threshold_A) / range * 100.0f + 0.5f);
+    if (pct < 1)   pct = 1;
+    if (pct > 100) pct = 100;
+    return (uint8_t)pct;
+}
 
 void Laser_Control_Init(void)
 {
@@ -16,7 +30,10 @@ void Laser_Control_SetCurrent(float amps)
 {
     if (amps < 0.0f) amps = 0.0f;
     if (amps > g_laser_state.max_current_A) amps = g_laser_state.max_current_A;
+    /* Below threshold but not zero: no lasing occurs — snap to 0 */
+    if (amps > 0.0f && amps < g_laser_state.threshold_A) amps = 0.0f;
     g_laser_state.current_A = amps;
+    g_laser_state.power_pct = current_to_pct(amps);
     if (g_laser_state.enabled)
         BSP_Laser_SetCurrent(amps);
 }
@@ -30,6 +47,41 @@ void Laser_Control_SetMaxCurrent(float amps)
         if (g_laser_state.enabled)
             BSP_Laser_SetCurrent(amps);
     }
+}
+
+void Laser_Control_SetThreshold(float amps)
+{
+    if (amps < 0.0f) amps = 0.0f;
+    g_laser_state.threshold_A = amps;
+
+    if (g_laser_state.current_A > 0.0f && g_laser_state.current_A < amps) {
+        /* Current now below threshold — zero it */
+        g_laser_state.current_A = 0.0f;
+        g_laser_state.power_pct = 0;
+        if (g_laser_state.enabled)
+            BSP_Laser_Disable();
+    } else {
+        /* Threshold changed — recompute power percentage */
+        g_laser_state.power_pct = current_to_pct(g_laser_state.current_A);
+    }
+}
+
+void Laser_Control_SetPower(uint8_t pct)
+{
+    if (pct > 100) pct = 100;
+    g_laser_state.power_pct = pct;
+
+    float amps;
+    if (pct == 0) {
+        amps = 0.0f;
+    } else {
+        amps = g_laser_state.threshold_A
+             + (pct / 100.0f) * (g_laser_state.max_current_A - g_laser_state.threshold_A);
+    }
+
+    g_laser_state.current_A = amps;
+    if (g_laser_state.enabled)
+        BSP_Laser_SetCurrent(amps);
 }
 
 void Laser_Control_Enable(void)

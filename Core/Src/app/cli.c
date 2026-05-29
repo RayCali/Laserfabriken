@@ -55,6 +55,8 @@ static void process_line(char *line)
                  "  set laser.setpoint     <val>  (C)\r\n"
                  "  set laser.current      <val>  (A)\r\n"
                  "  set laser.maxcurrent   <val>  (A)\r\n"
+                 "  set laser.threshold    <val>  (A)\r\n"
+                 "  set laser.power        <val>  (0-100 %)\r\n"
                  "  laser on\r\n"
                  "  laser off\r\n"
                  "  status\r\n"
@@ -87,8 +89,10 @@ static void process_line(char *line)
                   (double)g_laser_pid.Kd);
 
         const LaserState_t *ls = Laser_Control_GetState();
-        cli_sendf("Laser diode: I=%.4f A  Imax=%.4f A  %s\r\n",
+        cli_sendf("Laser diode: Pwr=%3u%%  I=%.4f A  Ith=%.4f A  Imax=%.4f A  %s\r\n",
+                  (unsigned)ls->power_pct,
                   (double)ls->current_A,
+                  (double)ls->threshold_A,
                   (double)ls->max_current_A,
                   ls->enabled ? "ON" : "OFF");
         return;
@@ -114,12 +118,36 @@ static void process_line(char *line)
         /* Laser diode current control (checked before TEC PID to avoid ambiguity) */
         if (strcmp(param, "laser.current") == 0) {
             Laser_Control_SetCurrent(val);
-            cli_sendf("OK laser.current = %.4f A\r\n", (double)val);
+            const LaserState_t *ls = Laser_Control_GetState();
+            if (val > 0.0f && ls->current_A == 0.0f)
+                cli_sendf("WARN: %.4f A is below threshold (%.4f A) — current set to 0\r\n",
+                          (double)val, (double)ls->threshold_A);
+            else
+                cli_sendf("OK laser.current = %.4f A\r\n", (double)ls->current_A);
             return;
         }
         if (strcmp(param, "laser.maxcurrent") == 0) {
             Laser_Control_SetMaxCurrent(val);
             cli_sendf("OK laser.maxcurrent = %.4f A\r\n", (double)val);
+            return;
+        }
+        if (strcmp(param, "laser.threshold") == 0) {
+            float prev_current = g_laser_state.current_A;
+            Laser_Control_SetThreshold(val);
+            const LaserState_t *ls = Laser_Control_GetState();
+            if (prev_current > 0.0f && ls->current_A == 0.0f)
+                cli_sendf("OK laser.threshold = %.4f A  (current was below threshold — set to 0)\r\n",
+                          (double)val);
+            else
+                cli_sendf("OK laser.threshold = %.4f A  (power = %u%%)\r\n",
+                          (double)val, (unsigned)ls->power_pct);
+            return;
+        }
+        if (strcmp(param, "laser.power") == 0) {
+            uint8_t pct = (val < 0.0f) ? 0u : (val > 100.0f) ? 100u : (uint8_t)val;
+            Laser_Control_SetPower(pct);
+            cli_sendf("OK laser.power = %u%%  -> I=%.4f A\r\n",
+                      (unsigned)pct, (double)Laser_Control_GetState()->current_A);
             return;
         }
         /* TEC PID params */

@@ -157,7 +157,7 @@ void BSP_Temp_Init(void)
     /* Write all 3 config registers in one WREG transaction:
      * Reg0: MUX=AIN0/AIN1 (crystal), Gain=1, PGA bypass
      * Reg1: DR=20 SPS, normal mode, continuous conversion
-     * Reg2: Internal VREF (2.048 V), no 50/60 Hz filter
+     * Reg2: Internal VREF (2.048 V)
      */
     uint8_t cfg[3] = {
         ADS1220_MUX_AIN0_AIN1 | ADS1220_GAIN_1 | ADS1220_PGA_BYPASS,

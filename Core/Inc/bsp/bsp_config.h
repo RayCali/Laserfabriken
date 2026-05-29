@@ -81,7 +81,7 @@
  * DAC code 0xFFFF maps to this value. The software limit in laser_control.c
  * can be set lower via CLI but never exceeds this value.
  */
-#define BSP_LASER_MAX_CURRENT_A  1.5f
+#define BSP_LASER_MAX_CURRENT_A  2.0f
 
 /* ── ADS1220 data rate ───────────────────────────────────────────────────────
  * 0x00 → 20 SPS: lowest noise, best for 5 mK stability requirement.
