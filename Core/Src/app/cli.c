@@ -49,6 +49,9 @@ static void process_line(char *line)
                  "  set crystal.ki         <val>\r\n"
                  "  set crystal.kd         <val>\r\n"
                  "  set crystal.setpoint   <val>  (C)\r\n"
+                 "  set crystal.wavelength <val>  (nm) — sets crystal setpoint via T=(λ-m)/k\r\n"
+                 "  set crystal.k          <val>  (nm/C, slope)\r\n"
+                 "  set crystal.m          <val>  (nm, offset)\r\n"
                  "  set laser.kp           <val>\r\n"
                  "  set laser.ki           <val>\r\n"
                  "  set laser.kd           <val>\r\n"
@@ -69,10 +72,14 @@ static void process_line(char *line)
         float temp, output;
 
         TEC_Control_GetState(TEC_CRYSTAL, &temp, &output);
-        cli_sendf("Crystal TEC: T=%7.4f C  SP=%7.4f  out=%+6.4f"
+        float wl = g_crystal_wl_k * g_crystal_pid.setpoint + g_crystal_wl_m;
+        cli_sendf("Crystal TEC: T=%7.4f C  SP=%7.4f C  WL=%7.2f nm  k=%.4f nm/C  m=%.2f nm  out=%+6.4f"
                   "  Kp=%.4f  Ki=%.6f  Kd=%.4f\r\n",
                   (double)temp,
                   (double)g_crystal_pid.setpoint,
+                  (double)wl,
+                  (double)g_crystal_wl_k,
+                  (double)g_crystal_wl_m,
                   (double)output,
                   (double)g_crystal_pid.Kp,
                   (double)g_crystal_pid.Ki,
@@ -114,6 +121,24 @@ static void process_line(char *line)
     char param[32], value_str[16];
     if (sscanf(line, "set %31s %15s", param, value_str) == 2) {
         float val = strtof(value_str, NULL);
+
+        /* Crystal wavelength model (checked before TEC PID to avoid param_name collision) */
+        if (strcmp(param, "crystal.wavelength") == 0) {
+            TEC_Crystal_SetWavelength(val);
+            cli_sendf("OK crystal.wavelength = %.2f nm  -> SP=%.4f C\r\n",
+                      (double)val, (double)g_crystal_pid.setpoint);
+            return;
+        }
+        if (strcmp(param, "crystal.k") == 0) {
+            g_crystal_wl_k = val;
+            cli_sendf("OK crystal.k = %.4f nm/C\r\n", (double)val);
+            return;
+        }
+        if (strcmp(param, "crystal.m") == 0) {
+            g_crystal_wl_m = val;
+            cli_sendf("OK crystal.m = %.2f nm\r\n", (double)val);
+            return;
+        }
 
         /* Laser diode current control (checked before TEC PID to avoid ambiguity) */
         if (strcmp(param, "laser.current") == 0) {

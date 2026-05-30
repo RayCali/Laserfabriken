@@ -4,6 +4,9 @@
 PID_t g_crystal_pid;
 PID_t g_laser_pid;
 
+float g_crystal_wl_k = 0.1929f;   /* nm/°C — from characterisation graph */
+float g_crystal_wl_m = 1548.6f;   /* nm   — from characterisation graph */
+
 static float s_crystal_temp   = 0.0f;
 static float s_laser_temp     = 0.0f;
 static float s_crystal_output = 0.0f;
@@ -49,4 +52,11 @@ void TEC_Control_GetState(TecChannel_t ch, float *temp_out, float *output_out)
         *temp_out   = s_laser_temp;
         *output_out = s_laser_output;
     }
+}
+
+void TEC_Crystal_SetWavelength(float nm)
+{
+    if (g_crystal_wl_k == 0.0f) return;
+    g_crystal_pid.setpoint = (nm - g_crystal_wl_m) / g_crystal_wl_k;
+    PID_Reset(&g_crystal_pid);
 }
