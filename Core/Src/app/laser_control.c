@@ -1,4 +1,5 @@
 #include "laser_control.h"
+#include "tec_control.h"
 #include "bsp_laser.h"
 
 LaserState_t g_laser_state = {
@@ -87,6 +88,7 @@ void Laser_Control_SetPower(uint8_t pct)
 void Laser_Control_Enable(void)
 {
     g_laser_state.enabled = 1;
+    TEC_LaserTempGuard_Reset();
     BSP_Laser_SetCurrent(g_laser_state.current_A);
 }
 

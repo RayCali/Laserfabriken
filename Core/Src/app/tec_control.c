@@ -1,4 +1,5 @@
 #include "tec_control.h"
+#include "laser_control.h"
 #include "bsp_temp.h"
 
 PID_t g_crystal_pid;
@@ -6,6 +7,14 @@ PID_t g_laser_pid;
 
 float g_crystal_wl_k = 0.1929f;   /* nm/°C — from characterisation graph */
 float g_crystal_wl_m = 1548.6f;   /* nm   — from characterisation graph */
+
+/* Laser temperature protection state */
+float   g_laser_temp_max_dev_C        = 5.0f;
+float   g_laser_temp_abs_max_C        = 60.0f;
+float   g_laser_temp_timer_s          = 30.0f;
+uint8_t g_laser_temp_guard_armed      = 0;
+float   g_laser_temp_settle_elapsed_s = 0.0f;
+uint8_t g_laser_temp_trip_reason      = LASER_TEMP_TRIP_NONE;
 
 static float s_crystal_temp   = 0.0f;
 static float s_laser_temp     = 0.0f;
@@ -41,6 +50,39 @@ void TEC_Control_Tick(void)
 
     BSP_TEC_SetOutput(TEC_CRYSTAL, s_crystal_output);
     BSP_TEC_SetOutput(TEC_LASER,   s_laser_output);
+
+    /* Laser temperature protection — only runs when laser is enabled */
+    if (Laser_Control_GetState()->enabled) {
+        /* Absolute max: hard cutoff regardless of guard state */
+        if (s_laser_temp > g_laser_temp_abs_max_C) {
+            Laser_Control_Disable();
+            g_laser_temp_trip_reason      = LASER_TEMP_TRIP_ABS_MAX;
+            g_laser_temp_guard_armed      = 0;
+            g_laser_temp_settle_elapsed_s = 0.0f;
+        } else if (!g_laser_temp_guard_armed) {
+            /* Settling phase: accumulate time within deviation */
+            float dev = s_laser_temp - g_laser_pid.setpoint;
+            if (dev < 0.0f) dev = -dev;
+            if (dev <= g_laser_temp_max_dev_C) {
+                g_laser_temp_settle_elapsed_s += PID_PERIOD_S;
+                if (g_laser_temp_settle_elapsed_s >= g_laser_temp_timer_s)
+                    g_laser_temp_guard_armed = 1;
+            } else {
+                /* Left deviation window during settling — restart timer */
+                g_laser_temp_settle_elapsed_s = 0.0f;
+            }
+        } else {
+            /* Guard armed: any deviation beyond limit disables laser */
+            float dev = s_laser_temp - g_laser_pid.setpoint;
+            if (dev < 0.0f) dev = -dev;
+            if (dev > g_laser_temp_max_dev_C) {
+                Laser_Control_Disable();
+                g_laser_temp_trip_reason      = LASER_TEMP_TRIP_DEV;
+                g_laser_temp_guard_armed      = 0;
+                g_laser_temp_settle_elapsed_s = 0.0f;
+            }
+        }
+    }
 }
 
 void TEC_Control_GetState(TecChannel_t ch, float *temp_out, float *output_out)
@@ -59,4 +101,11 @@ void TEC_Crystal_SetWavelength(float nm)
     if (g_crystal_wl_k == 0.0f) return;
     g_crystal_pid.setpoint = (nm - g_crystal_wl_m) / g_crystal_wl_k;
     PID_Reset(&g_crystal_pid);
+}
+
+void TEC_LaserTempGuard_Reset(void)
+{
+    g_laser_temp_guard_armed      = 0;
+    g_laser_temp_settle_elapsed_s = 0.0f;
+    g_laser_temp_trip_reason      = LASER_TEMP_TRIP_NONE;
 }

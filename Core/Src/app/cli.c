@@ -55,11 +55,14 @@ static void process_line(char *line)
                  "  set laser.kp           <val>\r\n"
                  "  set laser.ki           <val>\r\n"
                  "  set laser.kd           <val>\r\n"
-                 "  set laser.setpoint     <val>  (C)\r\n"
+                 "  set laser.setpoint     <val>  (C)  — resets temp guard\r\n"
                  "  set laser.current      <val>  (A)\r\n"
                  "  set laser.maxcurrent   <val>  (A)\r\n"
                  "  set laser.threshold    <val>  (A)\r\n"
                  "  set laser.power        <val>  (0-100 %)\r\n"
+                 "  set laser.max_temp_deviation <val>  (C)\r\n"
+                 "  set laser.absolute_max_temp  <val>  (C)\r\n"
+                 "  set laser.temp_timer         <val>  (s)\r\n"
                  "  laser on\r\n"
                  "  laser off\r\n"
                  "  status\r\n"
@@ -94,6 +97,19 @@ static void process_line(char *line)
                   (double)g_laser_pid.Kp,
                   (double)g_laser_pid.Ki,
                   (double)g_laser_pid.Kd);
+        if (g_laser_temp_trip_reason == LASER_TEMP_TRIP_ABS_MAX)
+            cli_send("  Temp guard: TRIPPED — absolute max exceeded\r\n");
+        else if (g_laser_temp_trip_reason == LASER_TEMP_TRIP_DEV)
+            cli_send("  Temp guard: TRIPPED — deviation exceeded after settling\r\n");
+        else if (g_laser_temp_guard_armed)
+            cli_sendf("  Temp guard: ARMED  (max_dev=%.2f C  abs_max=%.2f C)\r\n",
+                      (double)g_laser_temp_max_dev_C, (double)g_laser_temp_abs_max_C);
+        else
+            cli_sendf("  Temp guard: settling %.1f/%.1f s  (max_dev=%.2f C  abs_max=%.2f C)\r\n",
+                      (double)g_laser_temp_settle_elapsed_s,
+                      (double)g_laser_temp_timer_s,
+                      (double)g_laser_temp_max_dev_C,
+                      (double)g_laser_temp_abs_max_C);
 
         const LaserState_t *ls = Laser_Control_GetState();
         cli_sendf("Laser diode: Pwr=%3u%%  I=%.4f A  Ith=%.4f A  Imax=%.4f A  %s\r\n",
@@ -175,6 +191,21 @@ static void process_line(char *line)
                       (unsigned)pct, (double)Laser_Control_GetState()->current_A);
             return;
         }
+        if (strcmp(param, "laser.max_temp_deviation") == 0) {
+            g_laser_temp_max_dev_C = val;
+            cli_sendf("OK laser.max_temp_deviation = %.2f C\r\n", (double)val);
+            return;
+        }
+        if (strcmp(param, "laser.absolute_max_temp") == 0) {
+            g_laser_temp_abs_max_C = val;
+            cli_sendf("OK laser.absolute_max_temp = %.2f C\r\n", (double)val);
+            return;
+        }
+        if (strcmp(param, "laser.temp_timer") == 0) {
+            g_laser_temp_timer_s = val;
+            cli_sendf("OK laser.temp_timer = %.1f s\r\n", (double)val);
+            return;
+        }
         /* TEC PID params */
         PID_t *pid = NULL;
         const char *param_name = NULL;
@@ -202,6 +233,8 @@ static void process_line(char *line)
         } else if (strcmp(param_name, "setpoint") == 0) {
             pid->setpoint = val;
             PID_Reset(pid); /* reset integral when setpoint changes */
+            if (pid == &g_laser_pid)
+                TEC_LaserTempGuard_Reset();
             cli_sendf("OK %s = %.4f C (integral reset)\r\n", param, (double)val);
         } else {
             cli_send("ERR: unknown parameter\r\n");
