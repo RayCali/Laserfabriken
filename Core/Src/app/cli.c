@@ -63,6 +63,8 @@ static void process_line(char *line)
                  "  set laser.max_temp_deviation <val>  (C)\r\n"
                  "  set laser.absolute_max_temp  <val>  (C)\r\n"
                  "  set laser.temp_timer         <val>  (s)\r\n"
+                 "  set sim.laser_temp   <val>  (C) — inject fake laser temp\r\n"
+                 "  sim off              — disable sim overrides\r\n"
                  "  laser on\r\n"
                  "  laser off\r\n"
                  "  status\r\n"
@@ -130,6 +132,13 @@ static void process_line(char *line)
     if (strcmp(line, "laser off") == 0) {
         Laser_Control_Disable();
         cli_send("OK laser disabled\r\n");
+        return;
+    }
+
+    /* sim off */
+    if (strcmp(line, "sim off") == 0) {
+        g_sim_laser_temp_enable = 0;
+        cli_send("OK sim disabled\r\n");
         return;
     }
 
@@ -206,6 +215,12 @@ static void process_line(char *line)
             cli_sendf("OK laser.temp_timer = %.1f s\r\n", (double)val);
             return;
         }
+        if (strcmp(param, "sim.laser_temp") == 0) {
+            g_sim_laser_temp_C      = val;
+            g_sim_laser_temp_enable = 1;
+            cli_sendf("OK sim.laser_temp = %.4f C  (sim active)\r\n", (double)val);
+            return;
+        }
         /* TEC PID params */
         PID_t *pid = NULL;
         const char *param_name = NULL;
@@ -256,6 +271,15 @@ void CLI_Init(void)
 void CLI_Process(void)
 {
     uint8_t byte;
+
+    /* Print trip notification as soon as it is set by the control loop */
+    if (g_laser_temp_trip_pending) {
+        g_laser_temp_trip_pending = 0;
+        if (g_laser_temp_trip_reason == LASER_TEMP_TRIP_ABS_MAX)
+            cli_send("\r\n!! LASER OFF — absolute max temperature exceeded !!\r\n> ");
+        else
+            cli_send("\r\n!! LASER OFF — temperature deviation exceeded after settling !!\r\n> ");
+    }
 
     /* Drain all available bytes without blocking the main loop */
     while (HAL_UART_Receive(BSP_CLI_UART, &byte, 1, 0) == HAL_OK) {

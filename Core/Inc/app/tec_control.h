@@ -36,6 +36,11 @@ extern float   g_laser_temp_settle_elapsed_s;/* seconds spent within deviation s
 #define LASER_TEMP_TRIP_ABS_MAX 1u
 #define LASER_TEMP_TRIP_DEV     2u
 extern uint8_t g_laser_temp_trip_reason;     /* last trip cause, cleared on guard reset */
+extern uint8_t g_laser_temp_trip_pending;    /* set when tripped, cleared after CLI prints */
+
+/* Simulation overrides — inject a fixed temperature without real hardware. */
+extern uint8_t g_sim_laser_temp_enable;
+extern float   g_sim_laser_temp_C;
 
 /* Init both TEC channels and PID controllers with default parameters. */
 void TEC_Control_Init(void);
