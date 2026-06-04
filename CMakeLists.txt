@@ -19,7 +19,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Set the project name
-set(CMAKE_PROJECT_NAME Laserfabriken_v1)
+set(CMAKE_PROJECT_NAME laserfabriken_v2)
 
 # Enable compile command to ease indexing with e.g. clangd
 set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
@@ -46,11 +46,12 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/app/pid.c
     Core/Src/app/tec_control.c
+    Core/Src/app/laser_control.c
+    Core/Src/app/params.c
     Core/Src/app/cli.c
     Core/Src/bsp/bsp_temp.c
     Core/Src/bsp/bsp_tec.c
     Core/Src/bsp/bsp_laser.c
-    Core/Src/app/laser_control.c
 )
 
 # Add include paths
@@ -70,8 +71,8 @@ list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 # Add linked libraries
 target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
-    m               # libm for logf() in bsp_temp.c (Steinhart-Hart)
+
+    # Add user defined libraries
 )
 
-# float printf support for CLI output (%f in vsnprintf)
 target_link_options(${CMAKE_PROJECT_NAME} PRIVATE -u _printf_float)

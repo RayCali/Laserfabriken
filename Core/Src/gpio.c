@@ -32,14 +32,7 @@
 
 /* USER CODE END 1 */
 
-/** Configure pins as
-        * Analog
-        * Input
-        * Output
-        * EVENT_OUT
-        * EXTI
-     PA11   ------> USB_OTG_FS_DM
-     PA12   ------> USB_OTG_FS_DP
+/** Configure pins
 */
 void MX_GPIO_Init(void)
 {
@@ -48,49 +41,53 @@ void MX_GPIO_Init(void)
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
-  __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, DRV2_IN1_Pin|DRV2_IN2_Pin|DRV2_nSLEEP_Pin|DRV1_nFAULT_Pin
-                          |DRV2_CS_Pin|EN_5V_Pin|DAC_CS_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, DRV2_IN1_Pin|DRV2_IN2_Pin|DRV2_nSLEEP_Pin|DRV2_CS_Pin
+                          |DRV1_CS_Pin|EN_5V_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, DRV1_IN1_Pin|DRV1_IN2_Pin|DRV1_nSLEEP_Pin|DRV1_nFAULTB3_Pin
-                          |DRV1_CS_Pin|ADC_CS_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, ADC_CS_Pin|DAC_CS_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : B1_Pin */
-  GPIO_InitStruct.Pin = B1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, DRV1_IN1_Pin|DRV1_IN2_Pin|DRV1_nSLEEP_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : DRV2_IN1_Pin DRV2_IN2_Pin DRV2_nSLEEP_Pin DRV1_nFAULT_Pin
-                           DRV2_CS_Pin EN_5V_Pin DAC_CS_Pin */
-  GPIO_InitStruct.Pin = DRV2_IN1_Pin|DRV2_IN2_Pin|DRV2_nSLEEP_Pin|DRV1_nFAULT_Pin
-                          |DRV2_CS_Pin|EN_5V_Pin|DAC_CS_Pin;
+  /*Configure GPIO pins : DRV2_IN1_Pin DRV2_IN2_Pin DRV2_nSLEEP_Pin DRV2_CS_Pin
+                           DRV1_CS_Pin EN_5V_Pin */
+  GPIO_InitStruct.Pin = DRV2_IN1_Pin|DRV2_IN2_Pin|DRV2_nSLEEP_Pin|DRV2_CS_Pin
+                          |DRV1_CS_Pin|EN_5V_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : DRV1_IN1_Pin DRV1_IN2_Pin DRV1_nSLEEP_Pin DRV1_nFAULTB3_Pin
-                           DRV1_CS_Pin ADC_CS_Pin */
-  GPIO_InitStruct.Pin = DRV1_IN1_Pin|DRV1_IN2_Pin|DRV1_nSLEEP_Pin|DRV1_nFAULTB3_Pin
-                          |DRV1_CS_Pin|ADC_CS_Pin;
+  /*Configure GPIO pin : DRV2_nFAULT_Pin */
+  GPIO_InitStruct.Pin = DRV2_nFAULT_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(DRV2_nFAULT_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : DRV1_nFAULT_Pin */
+  GPIO_InitStruct.Pin = DRV1_nFAULT_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(DRV1_nFAULT_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : ADC_CS_Pin DAC_CS_Pin */
+  GPIO_InitStruct.Pin = ADC_CS_Pin|DAC_CS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : DRV1_IN1_Pin DRV1_IN2_Pin DRV1_nSLEEP_Pin */
+  GPIO_InitStruct.Pin = DRV1_IN1_Pin|DRV1_IN2_Pin|DRV1_nSLEEP_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : PA11 PA12 */
-  GPIO_InitStruct.Pin = GPIO_PIN_11|GPIO_PIN_12;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF10_OTG_FS;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pin : ADC_DRDY_Pin */
   GPIO_InitStruct.Pin = ADC_DRDY_Pin;

@@ -27,7 +27,7 @@ extern "C" {
 #endif
 
 /* Includes ------------------------------------------------------------------*/
-#include "stm32f4xx_hal.h"
+#include "stm32g4xx_hal.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -57,22 +57,24 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define B1_Pin GPIO_PIN_13
-#define B1_GPIO_Port GPIOC
 #define DRV2_IN1_Pin GPIO_PIN_0
 #define DRV2_IN1_GPIO_Port GPIOC
 #define DRV2_IN2_Pin GPIO_PIN_1
 #define DRV2_IN2_GPIO_Port GPIOC
 #define DRV2_nSLEEP_Pin GPIO_PIN_2
 #define DRV2_nSLEEP_GPIO_Port GPIOC
-#define DRV1_nFAULT_Pin GPIO_PIN_3
-#define DRV1_nFAULT_GPIO_Port GPIOC
-#define USART_TX_Pin GPIO_PIN_2
-#define USART_TX_GPIO_Port GPIOA
-#define USART_RX_Pin GPIO_PIN_3
-#define USART_RX_GPIO_Port GPIOA
+#define DRV2_nFAULT_Pin GPIO_PIN_3
+#define DRV2_nFAULT_GPIO_Port GPIOC
+#define DRV1_nFAULT_Pin GPIO_PIN_0
+#define DRV1_nFAULT_GPIO_Port GPIOA
+#define ADC_CS_Pin GPIO_PIN_2
+#define ADC_CS_GPIO_Port GPIOA
+#define DAC_CS_Pin GPIO_PIN_3
+#define DAC_CS_GPIO_Port GPIOA
 #define DRV2_CS_Pin GPIO_PIN_4
 #define DRV2_CS_GPIO_Port GPIOC
+#define DRV1_CS_Pin GPIO_PIN_5
+#define DRV1_CS_GPIO_Port GPIOC
 #define DRV1_IN1_Pin GPIO_PIN_0
 #define DRV1_IN1_GPIO_Port GPIOB
 #define DRV1_IN2_Pin GPIO_PIN_1
@@ -81,20 +83,12 @@ void Error_Handler(void);
 #define DRV1_nSLEEP_GPIO_Port GPIOB
 #define EN_5V_Pin GPIO_PIN_6
 #define EN_5V_GPIO_Port GPIOC
-#define DAC_CS_Pin GPIO_PIN_7
-#define DAC_CS_GPIO_Port GPIOC
-#define TMS_Pin GPIO_PIN_13
-#define TMS_GPIO_Port GPIOA
-#define TCK_Pin GPIO_PIN_14
-#define TCK_GPIO_Port GPIOA
-#define DRV1_nFAULTB3_Pin GPIO_PIN_3
-#define DRV1_nFAULTB3_GPIO_Port GPIOB
+#define DISPLAY_TX_Pin GPIO_PIN_10
+#define DISPLAY_TX_GPIO_Port GPIOC
+#define DISPLAY_RX_Pin GPIO_PIN_11
+#define DISPLAY_RX_GPIO_Port GPIOC
 #define ADC_DRDY_Pin GPIO_PIN_4
 #define ADC_DRDY_GPIO_Port GPIOB
-#define DRV1_CS_Pin GPIO_PIN_5
-#define DRV1_CS_GPIO_Port GPIOB
-#define ADC_CS_Pin GPIO_PIN_6
-#define ADC_CS_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 

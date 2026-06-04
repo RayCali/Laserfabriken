@@ -2,7 +2,7 @@
 #include "bsp_config.h"
 #include "tec_control.h"
 #include "laser_control.h"
-#include "stm32f4xx_hal.h"
+#include "params.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
@@ -20,8 +20,7 @@ static uint16_t s_disp_pos;
 
 static void cli_send(const char *str)
 {
-    HAL_UART_Transmit(BSP_CLI_UART, (const uint8_t *)str,
-                      (uint16_t)strlen(str), 500);
+    BSP_CLI_Send(str, strlen(str));
 }
 
 static void cli_sendf(const char *fmt, ...)
@@ -78,6 +77,7 @@ static void process_line(char *line)
                  "  laser on\r\n"
                  "  laser off\r\n"
                  "  status\r\n"
+                 "  save\r\n"
                  "  help\r\n");
         return;
     }
@@ -152,6 +152,13 @@ static void process_line(char *line)
         return;
     }
 
+    /* save */
+    if (strcmp(line, "save") == 0) {
+        int r = Params_Save();
+        cli_send(r == 0 ? "OK saved\r\n" : "ERR: flash write failed\r\n");
+        return;
+    }
+
     /* set <param> <value> */
     char param[32], value_str[16];
     if (sscanf(line, "set %31s %15s", param, value_str) == 2) {
@@ -162,16 +169,23 @@ static void process_line(char *line)
             TEC_Crystal_SetWavelength(val);
             cli_sendf("OK crystal.wavelength = %.2f nm  -> SP=%.4f C\r\n",
                       (double)val, (double)g_crystal_pid.setpoint);
+            Params_MarkDirty();
             return;
         }
         if (strcmp(param, "crystal.k") == 0) {
+            float wl = g_crystal_wl_k * g_crystal_pid.setpoint + g_crystal_wl_m;
             g_crystal_wl_k = val;
-            cli_sendf("OK crystal.k = %.4f nm/C\r\n", (double)val);
+            TEC_Crystal_SetWavelength(wl);
+            cli_sendf("OK crystal.k = %.4f nm/C  -> SP=%.4f C\r\n",
+                      (double)val, (double)g_crystal_pid.setpoint);
             return;
         }
         if (strcmp(param, "crystal.m") == 0) {
+            float wl = g_crystal_wl_k * g_crystal_pid.setpoint + g_crystal_wl_m;
             g_crystal_wl_m = val;
-            cli_sendf("OK crystal.m = %.2f nm\r\n", (double)val);
+            TEC_Crystal_SetWavelength(wl);
+            cli_sendf("OK crystal.m = %.2f nm  -> SP=%.4f C\r\n",
+                      (double)val, (double)g_crystal_pid.setpoint);
             return;
         }
 
@@ -208,6 +222,7 @@ static void process_line(char *line)
             Laser_Control_SetPower(pct);
             cli_sendf("OK laser.power = %u%%  -> I=%.4f A\r\n",
                       (unsigned)pct, (double)Laser_Control_GetState()->current_A);
+            Params_MarkDirty();
             return;
         }
         if (strcmp(param, "laser.max_temp_deviation") == 0) {
@@ -274,7 +289,7 @@ static void process_line(char *line)
 
 void CLI_Init(void)
 {
-    cli_send("\r\n=== Laserfabriken v1 ===\r\n");
+    cli_send("\r\n=== Laserfabriken v2 ===\r\n");
     cli_send("Type 'help' for commands\r\n> ");
 }
 
@@ -292,7 +307,7 @@ void CLI_Process(void)
     }
 
     /* Drain all available bytes without blocking the main loop */
-    while (HAL_UART_Receive(BSP_CLI_UART, &byte, 1, 0) == HAL_OK) {
+    while (BSP_CLI_Receive(&byte) == 0) {
         if (byte == '\r' || byte == '\n') {
             if (s_line_pos > 0) {
                 s_line_buf[s_line_pos] = '\0';
@@ -310,7 +325,7 @@ void CLI_Process(void)
             }
         } else if (byte >= 0x20 && s_line_pos < CLI_BUF_LEN - 1) {
             s_line_buf[s_line_pos++] = (char)byte;
-            HAL_UART_Transmit(BSP_CLI_UART, &byte, 1, 10); /* echo */
+            BSP_CLI_Send(&byte, 1); /* echo */
         }
     }
 
