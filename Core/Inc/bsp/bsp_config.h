@@ -72,9 +72,9 @@
  * Example below is for a generic 100 kΩ NTC at 25°C (B=3950 K).
  * Calculate A/B/C from three calibration points using the S-H equation.
  */
-#define BSP_NTC_SH_A    1.009249522e-3f
-#define BSP_NTC_SH_B    2.378405444e-4f
-#define BSP_NTC_SH_C    2.019202697e-7f
+#define BSP_NTC_SH_A    8.757e-4f
+#define BSP_NTC_SH_B    2.535e-4f
+#define BSP_NTC_SH_C    1.838e-7f
 
 /* ── NTC voltage divider ─────────────────────────────────────────────────────
  * ADS1220 internal reference = 2.048 V
