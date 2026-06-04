@@ -2,8 +2,7 @@
 /**
   ******************************************************************************
   * @file    usart.h
-  * @brief   This file contains all the function prototypes for
-  *          the usart.c file
+  * @brief   This file contains all the function prototypes for the usart.c file
   ******************************************************************************
   * @attention
   *
