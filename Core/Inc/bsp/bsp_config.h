@@ -21,6 +21,13 @@
  */
 #define BSP_CLI_UART    (&huart2)
 
+/* ── Display UART ────────────────────────────────────────────────────────────
+ * USART1 (PA9/PA10) — bidirectional bridge to ESP32 display.
+ * Receives CLI commands from display; forwards terminal commands to display.
+ */
+#define BSP_DISPLAY_Send(buf, len)   HAL_UART_Transmit(&huart1, (uint8_t*)(buf), (uint16_t)(len), 100)
+#define BSP_DISPLAY_Receive(pbyte)   HAL_UART_Receive(&huart1, (pbyte), 1, 0)
+
 /* ── Shared SPI bus ──────────────────────────────────────────────────────────
  * All peripherals share SPI1. ADS1220 uses Mode 1; others use Mode 0.
  * bsp_temp.c switches mode around each ADS1220 transaction.

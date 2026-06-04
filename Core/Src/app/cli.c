@@ -13,6 +13,9 @@
 static char     s_line_buf[CLI_BUF_LEN];
 static uint16_t s_line_pos;
 
+static char     s_disp_buf[CLI_BUF_LEN];
+static uint16_t s_disp_pos;
+
 /* ── Output helpers ──────────────────────────────────────────────────────── */
 
 static void cli_send(const char *str)
@@ -29,6 +32,13 @@ static void cli_sendf(const char *fmt, ...)
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
     cli_send(buf);
+}
+
+static void disp_forward(const char *line)
+{
+    BSP_DISPLAY_Send(line, strlen(line));
+    const char crlf[] = "\r\n";
+    BSP_DISPLAY_Send(crlf, 2);
 }
 
 /* ── Command processing ──────────────────────────────────────────────────── */
@@ -287,6 +297,7 @@ void CLI_Process(void)
             if (s_line_pos > 0) {
                 s_line_buf[s_line_pos] = '\0';
                 cli_send("\r\n");
+                disp_forward(s_line_buf);
                 process_line(s_line_buf);
                 s_line_pos = 0;
             }
@@ -300,6 +311,21 @@ void CLI_Process(void)
         } else if (byte >= 0x20 && s_line_pos < CLI_BUF_LEN - 1) {
             s_line_buf[s_line_pos++] = (char)byte;
             HAL_UART_Transmit(BSP_CLI_UART, &byte, 1, 10); /* echo */
+        }
+    }
+
+    /* Drain display UART — process received commands without forwarding back */
+    while (BSP_DISPLAY_Receive(&byte) == 0) {
+        if (byte == '\r' || byte == '\n') {
+            if (s_disp_pos > 0) {
+                s_disp_buf[s_disp_pos] = '\0';
+                cli_send("\r\n");
+                process_line(s_disp_buf);
+                s_disp_pos = 0;
+                cli_send("> ");
+            }
+        } else if (byte >= 0x20 && s_disp_pos < CLI_BUF_LEN - 1) {
+            s_disp_buf[s_disp_pos++] = (char)byte;
         }
     }
 }
