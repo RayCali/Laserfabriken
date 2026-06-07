@@ -214,4 +214,9 @@ void USB_LP_IRQHandler(void)
 
 /* USER CODE BEGIN 1 */
 
+void EXTI4_IRQHandler(void)
+{
+    HAL_GPIO_EXTI_IRQHandler(ADC_DRDY_Pin);
+}
+
 /* USER CODE END 1 */

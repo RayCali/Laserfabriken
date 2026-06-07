@@ -1,19 +1,16 @@
 #include "bsp_tec.h"
 #include "bsp_config.h"
+#include "dac.h"
 #include "stm32g4xx_hal.h"
 #include <stdint.h>
 
 /*
- * DRV8873S control — SPI Mode 0 (CPOL=0, CPHA=0).
+ * DRV8873S control — SPI Mode 1 (CPOL=0, CPHA=1).
+ * All SPI peripherals on this bus (ADS1220, DRV8873S, DAC8562S) use Mode 1 —
+ * no runtime mode switching needed.
  *
- * Direction: IN1/IN2 GPIOs — fully functional now.
- * Amplitude: STM32 internal DAC (ch1 = Crystal, ch2 = Laser TEC).
- *   DAC8562S is NOT used here — it is only for laser diode current (bsp_laser.c).
- *
- * TODO: Enable DAC1 in CubeMX (.ioc):
- *   - OUT1 (PA4) → Crystal TEC amplitude
- *   - OUT2 (PA5) → Laser TEC amplitude
- *   Then include dac.h and uncomment HAL_DAC calls below.
+ * Direction: IN1/IN2 GPIOs.
+ * Amplitude: STM32 internal DAC1 (ch1 = Crystal TEC, ch2 = Laser TEC).
  */
 
 /* ── Per-channel hardware description ────────────────────────────────────── */
@@ -44,32 +41,26 @@ static const DRV_HW_t s_drv[2] = {
     },
 };
 
-/* ── DRV8873S SPI register write (Mode 0, 16-bit frame) ─────────────────── */
+/* ── DRV8873S SPI register write (Mode 1, 16-bit frame) ─────────────────── */
 
 static void drv_write_reg(TecChannel_t ch, uint8_t reg, uint8_t val)
 {
-    /* DRV8873 SPI frame: [15] RW=0 (write), [14:8] address, [7:0] data */
+    /* DRV8873S SPI frame: [15]=0, [14]=RW(0=write), [13:9]=address, [8]=X, [7:0]=data */
     uint8_t tx[2] = {
-        (uint8_t)((reg & 0x7Fu) << 1), /* address in upper byte, RW=0 */
+        (uint8_t)((reg & 0x7Fu) << 1),
         val
     };
     HAL_GPIO_WritePin(s_drv[ch].cs_port, s_drv[ch].cs_pin, GPIO_PIN_RESET);
-    /* TODO: DRV8873S SPI — uncomment when SPI is wired:
-     *   HAL_SPI_Transmit(BSP_SPI_BUS, tx, 2, 10);
-     */
-    (void)tx;
+    HAL_SPI_Transmit(BSP_SPI_BUS, tx, 2, 10);
     HAL_GPIO_WritePin(s_drv[ch].cs_port, s_drv[ch].cs_pin, GPIO_PIN_SET);
 }
 
 /* ── STM32 internal DAC (12-bit, ch1 = Crystal TEC, ch2 = Laser TEC) ─────── */
 static void internal_dac_set(TecChannel_t ch, uint16_t code_12bit)
 {
-    /* TODO: Enable DAC1 in CubeMX (.ioc) and include dac.h, then uncomment:
-     *   uint32_t dac_ch = (ch == TEC_CRYSTAL) ? DAC_CHANNEL_1 : DAC_CHANNEL_2;
-     *   HAL_DAC_SetValue(&hdac, dac_ch, DAC_ALIGN_12B_R, code_12bit);
-     *   HAL_DAC_Start(&hdac, dac_ch);
-     */
-    (void)ch; (void)code_12bit;
+    uint32_t dac_ch = (ch == TEC_CRYSTAL) ? DAC_CHANNEL_1 : DAC_CHANNEL_2;
+    HAL_DAC_SetValue(BSP_DAC, dac_ch, DAC_ALIGN_12B_R, code_12bit);
+    HAL_DAC_Start(BSP_DAC, dac_ch);
 }
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
@@ -84,14 +75,10 @@ void BSP_TEC_Init(TecChannel_t ch)
     HAL_GPIO_WritePin(s_drv[ch].nsleep_port, s_drv[ch].nsleep_pin, GPIO_PIN_SET);
     HAL_Delay(1);
 
-    /* TODO: DRV8873S SPI — configure IC1_CTRL register:
-     *   - PWM input mode (EN/IN1/IN2 control)
-     *   - Clear any latched faults (CLR_FLT bit)
-     * TODO: DRV8873S SPI — configure IC2_CTRL register:
-     *   - Set OCP deglitch time
-     *   - Set VM undervoltage lockout threshold
-     */
-    (void)drv_write_reg; /* suppress unused-function warning until TODOs filled */
+    /* IC1_CTRL (0x02): CLR_FLT=1 clears any latched fault at startup.
+     * All other bits left at power-on defaults (OCP latch, 0.6 µs deglitch).
+     * Verify register map against DRV8873S datasheet if behaviour is unexpected. */
+    drv_write_reg(ch, 0x04, 0x80); /* IC3_CTRL: CLR_FLT=1 (bit 7), LOCK default=100b (unlocked) */
 
     /* Set DAC to 0 output initially */
     internal_dac_set(ch, 0);

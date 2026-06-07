@@ -6,22 +6,9 @@
 
 /*
  * ADS1220 SPI interface — Mode 1 (CPOL=0, CPHA=1).
- * All other peripherals (DRV8873S, DAC8562S) use Mode 0.
- * spi_set_phase() switches the STM32 SPI clock phase around each ADS1220
- * transaction and restores Mode 0 afterward.
- *
- * G431CB migration option: put ADS1220 on a second SPI bus (hspi2 in
- * bsp_config.h) to eliminate the mode-switching entirely.
+ * All SPI peripherals on this bus (ADS1220, DRV8873S, DAC8562S) use Mode 1 —
+ * SPI1 is configured permanently for Mode 1 in spi.c.
  */
-
-/* ── SPI mode switching ───────────────────────────────────────────────────── */
-
-static void spi_set_phase(uint32_t phase)
-{
-    /* HAL_SPI_Init only writes CR1/CR2, so this is fast. */
-    BSP_SPI_BUS->Init.CLKPhase = phase;
-    HAL_SPI_Init(BSP_SPI_BUS);
-}
 
 /* ── ADS1220 command byte definitions (datasheet Table 16) ──────────────── */
 
@@ -46,6 +33,18 @@ static void spi_set_phase(uint32_t phase)
 #define ADS1220_VREF_INTERNAL   0x00u
 #define ADS1220_FILTER_NONE     0x00u
 
+/* ── DRDY interrupt flag and temperature cache ───────────────────────────── */
+
+static volatile uint8_t s_drdy_flag     = 0;
+static float            s_temp_cache[2] = {0.0f, 0.0f}; /* indexed by TempChannel_t */
+static TempChannel_t    s_active_ch     = TEMP_CH_CRYSTAL;
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    if (GPIO_Pin == ADC_DRDY_Pin)
+        s_drdy_flag = 1;
+}
+
 /* ── Chip-select helpers ─────────────────────────────────────────────────── */
 
 static void ads_cs_low(void)
@@ -62,21 +61,12 @@ static void ads_cs_high(void)
 
 static void ads_write(uint8_t *buf, uint16_t len)
 {
-    /* TODO: ADS1220 SPI — replace stub with:
-     *   HAL_SPI_Transmit(BSP_SPI_BUS, buf, len, 10);
-     */
-    (void)buf;
-    (void)len;
+    HAL_SPI_Transmit(BSP_SPI_BUS, buf, len, 10);
 }
 
 static void ads_read(uint8_t *buf, uint16_t len)
 {
-    /* TODO: ADS1220 SPI — replace stub with:
-     *   HAL_SPI_Receive(BSP_SPI_BUS, buf, len, 10);
-     */
-    (void)buf;
-    (void)len;
-    for (uint16_t i = 0; i < len; i++) buf[i] = 0;
+    HAL_SPI_Receive(BSP_SPI_BUS, buf, len, 10);
 }
 
 /* ── ADS1220 configuration ───────────────────────────────────────────────── */
@@ -103,11 +93,6 @@ static int32_t ads_read_raw(void)
 {
     uint8_t raw[3] = {0, 0, 0};
     uint8_t cmd    = ADS1220_CMD_RDATA;
-
-    /* TODO: ADS1220 SPI — wait for DRDY low before reading:
-     *   while (HAL_GPIO_ReadPin(ADC_DRDY_GPIO_Port, ADC_DRDY_Pin) == GPIO_PIN_SET);
-     * DRDY goes low when a new conversion result is ready.
-     */
 
     ads_cs_low();
     ads_write(&cmd, 1);
@@ -148,11 +133,9 @@ static float resistance_to_celsius(float r_ohm)
 
 void BSP_Temp_Init(void)
 {
-    spi_set_phase(SPI_PHASE_2EDGE); /* ADS1220 requires Mode 1 */
-
     /* Reset ADS1220 to power-on defaults */
     ads_send_cmd(ADS1220_CMD_RESET);
-    /* TODO: ADS1220 SPI — add HAL_Delay(1) after reset (t_por = 0.6 ms typ.) */
+    HAL_Delay(1); /* t_por = 0.6 ms typ. per datasheet */
 
     /* Write all 3 config registers in one WREG transaction:
      * Reg0: MUX=AIN0/AIN1 (crystal), Gain=1, PGA bypass
@@ -168,28 +151,31 @@ void BSP_Temp_Init(void)
 
     /* Start continuous conversions */
     ads_send_cmd(ADS1220_CMD_START);
-
-    spi_set_phase(SPI_PHASE_1EDGE); /* Restore Mode 0 for other peripherals */
 }
 
 float BSP_Temp_Read(TempChannel_t ch)
 {
-    spi_set_phase(SPI_PHASE_2EDGE); /* ADS1220 Mode 1 */
+    if (!s_drdy_flag)
+        return s_temp_cache[ch]; /* no new data — return last known value */
 
-    /* TODO: ADS1220 SPI — multiplex channel by rewriting Reg0 MUX field:
-     *   TEMP_CH_CRYSTAL: ADS1220_MUX_AIN0_AIN1
-     *   TEMP_CH_LASER:   ADS1220_MUX_AIN2_AIN3
-     * Then send START to re-trigger, wait for DRDY, then RDATA.
-     * For now the channel argument is unused — both reads return 0.0f.
-     */
-    (void)ch;
+    s_drdy_flag = 0;
 
-    int32_t raw = ads_read_raw(); /* returns 0 until SPI is implemented */
+    /* Read the conversion result for whichever channel is currently active */
+    int32_t raw = ads_read_raw();
 
-    spi_set_phase(SPI_PHASE_1EDGE); /* Restore Mode 0 */
+    if (raw != 0) {
+        float r = raw_to_resistance(raw);
+        s_temp_cache[s_active_ch] = resistance_to_celsius(r);
+    }
 
-    if (raw == 0) return 0.0f; /* stub sentinel — SPI not yet wired */
+    /* Switch MUX to the other channel and re-trigger — next result arrives via DRDY */
+    s_active_ch = (s_active_ch == TEMP_CH_CRYSTAL) ? TEMP_CH_LASER : TEMP_CH_CRYSTAL;
+    uint8_t mux = (s_active_ch == TEMP_CH_CRYSTAL) ? ADS1220_MUX_AIN0_AIN1
+                                                    : ADS1220_MUX_AIN2_AIN3;
+    uint8_t reg0 = mux | ADS1220_GAIN_1 | ADS1220_PGA_BYPASS;
 
-    float r = raw_to_resistance(raw);
-    return resistance_to_celsius(r);
+    ads_write_regs(0, &reg0, 1);
+    ads_send_cmd(ADS1220_CMD_START);
+
+    return s_temp_cache[ch];
 }
