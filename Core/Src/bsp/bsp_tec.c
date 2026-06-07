@@ -45,7 +45,7 @@ static const DRV_HW_t s_drv[2] = {
 
 static void drv_write_reg(TecChannel_t ch, uint8_t reg, uint8_t val)
 {
-    /* DRV8873S SPI frame: [15]=0, [14]=RW(0=write), [13:9]=address, [8]=X, [7:0]=data */
+    /* DRV8873S SPI frame: [15]=RW(0=write), [14:9]=address, [8]=X, [7:0]=data */
     uint8_t tx[2] = {
         (uint8_t)((reg & 0x7Fu) << 1),
         val

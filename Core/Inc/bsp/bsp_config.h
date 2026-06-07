@@ -32,8 +32,7 @@
 #define BSP_DISPLAY_Receive(pbyte)   HAL_UART_Receive(&huart4, (pbyte), 1, 0)
 
 /* ── Shared SPI bus ──────────────────────────────────────────────────────────
- * All peripherals share SPI1. ADS1220 uses Mode 1; others use Mode 0.
- * bsp_temp.c switches mode around each ADS1220 transaction.
+ * All peripherals share SPI1 in Mode 1 (CPOL=0, CPHA=1): ADS1220, DRV8873S, DAC8562S.
  */
 #define BSP_SPI_BUS     (&hspi1)
 
@@ -87,7 +86,7 @@
 
 /* ── NTC voltage divider ─────────────────────────────────────────────────────
  * ADS1220 internal reference = 2.048 V
- * R_series = resistor in series with NTC (populate value from schematic)
+ * R_series = resistor in series with NTC
  */
 #define BSP_NTC_VREF_V       2.048f
 #define BSP_NTC_RSERIES_OHM  10000.0f
