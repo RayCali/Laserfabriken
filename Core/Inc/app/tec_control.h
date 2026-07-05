@@ -42,6 +42,14 @@ extern uint8_t g_laser_temp_trip_pending;    /* set when tripped, cleared after 
 extern uint8_t g_sim_laser_temp_enable;
 extern float   g_sim_laser_temp_C;
 
+/*
+ * TEC buck (M5 TPS563252) power-good fault.
+ * Latched while BSP_TEC_PowerGood() reads bad; output is held disabled for
+ * the duration. Clears automatically once PG reads good again.
+ */
+extern uint8_t g_tec_pg_fault;         /* 1 = PG fault currently active */
+extern uint8_t g_tec_pg_fault_pending; /* set when fault begins, cleared after CLI prints */
+
 /* Init both TEC channels and PID controllers with default parameters. */
 void TEC_Control_Init(void);
 

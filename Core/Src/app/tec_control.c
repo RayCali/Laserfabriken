@@ -21,6 +21,10 @@ uint8_t g_laser_temp_trip_pending     = 0;
 uint8_t g_sim_laser_temp_enable = 0;
 float   g_sim_laser_temp_C      = 0.0f;
 
+/* TEC buck power-good fault state */
+uint8_t g_tec_pg_fault         = 0;
+uint8_t g_tec_pg_fault_pending = 0;
+
 static float s_crystal_temp   = 0.0f;
 static float s_laser_temp     = 0.0f;
 static float s_crystal_output = 0.0f;
@@ -54,8 +58,17 @@ void TEC_Control_Tick(void)
     s_crystal_output = PID_Update(&g_crystal_pid, s_crystal_temp, PID_PERIOD_S);
     s_laser_output   = PID_Update(&g_laser_pid,   s_laser_temp,   PID_PERIOD_S);
 
-    BSP_TEC_SetOutput(TEC_CRYSTAL, s_crystal_output);
-    BSP_TEC_SetOutput(TEC_LASER,   s_laser_output);
+    /* TEC buck power-good check — hold output disabled while the buck reports a fault */
+    if (!BSP_TEC_PowerGood()) {
+        if (!g_tec_pg_fault)
+            g_tec_pg_fault_pending = 1;
+        g_tec_pg_fault = 1;
+        BSP_TEC_Disable(TEC_CRYSTAL);
+    } else {
+        g_tec_pg_fault = 0;
+        BSP_TEC_SetOutput(TEC_CRYSTAL, s_crystal_output);
+    }
+    BSP_TEC_SetOutput(TEC_LASER, s_laser_output);
 
     /* Laser temperature protection — only runs when laser is enabled */
     if (Laser_Control_GetState()->enabled) {

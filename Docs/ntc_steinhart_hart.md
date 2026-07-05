@@ -17,7 +17,7 @@
 | Drifttemperaturområde | −40°C till +125°C |
 
 Serieresistans i spänningsdelare: **10 kΩ** (= R₂₅ för maximal känslighet kring 25°C)  
-ADS1220 intern referens: **2.048 V**
+ADS1220 referens: **extern 2.9 V** (REFP0/REFN0) — används endast för ADC-råkod → resistans-omvandlingen (`raw_to_resistance()` i `bsp_temp.c`), påverkar inte Steinhart-Hart-koefficienterna nedan
 
 ---
 

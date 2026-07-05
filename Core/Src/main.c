@@ -94,8 +94,8 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DAC1_Init();
-  MX_SPI1_Init();
-  MX_UART4_Init();
+  MX_SPI3_Init();
+  MX_USART1_Init();
   MX_USB_Device_Init();
   /* USER CODE BEGIN 2 */
   TEC_Control_Init();

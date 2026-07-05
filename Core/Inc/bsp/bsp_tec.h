@@ -1,22 +1,26 @@
 #ifndef BSP_TEC_H
 #define BSP_TEC_H
 
+#include <stdbool.h>
+
 typedef enum {
     TEC_CRYSTAL = 0,
     TEC_LASER   = 1,
 } TecChannel_t;
 
-/* Wake DRV8873S and configure via SPI. Call once per channel at startup. */
+/* Enable the TEC buck converter and zero the output. Call once per channel at startup. */
 void BSP_TEC_Init(TecChannel_t ch);
 
 /* Set TEC drive level.
- * value ∈ [-1.0, +1.0]: positive = forward current, negative = reverse.
- * Magnitude maps to DAC8562S output (0–full scale).
- * Direction is controlled via DRV8873S IN1/IN2 GPIOs (already functional).
- * DAC amplitude output requires SPI implementation (see bsp_tec.c TODO). */
+ * value ∈ [-1.0, +1.0]: sign selects direction via the POLARITY GPIO,
+ * magnitude maps to the internal DAC amplitude output. */
 void BSP_TEC_SetOutput(TecChannel_t ch, float value);
 
-/* Coast the H-bridge and put DRV8873S to sleep. */
+/* Zero the output and disable the buck converter. */
 void BSP_TEC_Disable(TecChannel_t ch);
+
+/* Read the buck converter's PG (power-good) pin.
+ * Returns true when the converter reports healthy output, false on fault. */
+bool BSP_TEC_PowerGood(void);
 
 #endif /* BSP_TEC_H */

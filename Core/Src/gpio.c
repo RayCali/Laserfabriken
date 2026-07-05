@@ -40,65 +40,44 @@ void MX_GPIO_Init(void)
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, DRV2_IN1_Pin|DRV2_IN2_Pin|DRV2_nSLEEP_Pin|EN_5V_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, DRV2_CS_Pin|DRV1_CS_Pin, GPIO_PIN_SET);
-
-  /*Configure GPIO pin Output Level */
+  /* SPI CS pins start deasserted (HIGH) */
   HAL_GPIO_WritePin(GPIOA, ADC_CS_Pin|DAC_CS_Pin, GPIO_PIN_SET);
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, DRV1_IN1_Pin|DRV1_IN2_Pin|DRV1_nSLEEP_Pin, GPIO_PIN_RESET);
+  /* Control outputs start LOW, except M6_EN (5V output active at startup per spec 3.5) */
+  HAL_GPIO_WritePin(GPIOB, DISPLAY_DO1_Pin|DISPLAY_DO2_Pin|DISPLAY_DO3_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, M6_EN_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOC, TEC_EN_Pin|POLARITY_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : DRV2_IN1_Pin DRV2_IN2_Pin DRV2_nSLEEP_Pin DRV2_CS_Pin
-                           DRV1_CS_Pin EN_5V_Pin */
-  GPIO_InitStruct.Pin = DRV2_IN1_Pin|DRV2_IN2_Pin|DRV2_nSLEEP_Pin|DRV2_CS_Pin
-                          |DRV1_CS_Pin|EN_5V_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : DRV2_nFAULT_Pin */
-  GPIO_InitStruct.Pin = DRV2_nFAULT_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(DRV2_nFAULT_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : DRV1_nFAULT_Pin */
-  GPIO_InitStruct.Pin = DRV1_nFAULT_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(DRV1_nFAULT_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : ADC_CS_Pin DAC_CS_Pin */
+  /* ADC_CS (PA4), DAC_CS (PA3) — push-pull outputs */
   GPIO_InitStruct.Pin = ADC_CS_Pin|DAC_CS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : DRV1_IN1_Pin DRV1_IN2_Pin DRV1_nSLEEP_Pin */
-  GPIO_InitStruct.Pin = DRV1_IN1_Pin|DRV1_IN2_Pin|DRV1_nSLEEP_Pin;
+  /* TEC_PG (PA2) — open-drain power-good from TEC buck, needs pullup */
+  GPIO_InitStruct.Pin = TEC_PG_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /* M6_EN (PB0), DISPLAY_DO1/2/3 (PB13/14/15) */
+  GPIO_InitStruct.Pin = M6_EN_Pin|DISPLAY_DO1_Pin|DISPLAY_DO2_Pin|DISPLAY_DO3_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : ADC_DRDY_Pin */
-  GPIO_InitStruct.Pin = ADC_DRDY_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;  /* DRDY goes low when conversion is ready */
+  /* TEC_EN (PC5), POLARITY (PC6) */
+  GPIO_InitStruct.Pin = TEC_EN_Pin|POLARITY_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(ADC_DRDY_GPIO_Port, &GPIO_InitStruct);
-
-  HAL_NVIC_SetPriority(EXTI4_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(EXTI4_IRQn);
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
 }
 

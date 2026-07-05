@@ -76,6 +76,8 @@ static void process_line(char *line)
                  "  sim off              — disable sim overrides\r\n"
                  "  laser on\r\n"
                  "  laser off\r\n"
+                 "  5v on\r\n"
+                 "  5v off\r\n"
                  "  status\r\n"
                  "  save\r\n"
                  "  help\r\n");
@@ -99,6 +101,8 @@ static void process_line(char *line)
                   (double)g_crystal_pid.Kp,
                   (double)g_crystal_pid.Ki,
                   (double)g_crystal_pid.Kd);
+        if (g_tec_pg_fault)
+            cli_send("  TEC buck: FAULT — power-good low, output disabled\r\n");
 
         TEC_Control_GetState(TEC_LASER, &temp, &output);
         cli_sendf("Laser  TEC: T=%7.4f C  SP=%7.4f  out=%+6.4f"
@@ -142,6 +146,18 @@ static void process_line(char *line)
     if (strcmp(line, "laser off") == 0) {
         Laser_Control_Disable();
         cli_send("OK laser disabled\r\n");
+        return;
+    }
+
+    /* 5v on / 5v off */
+    if (strcmp(line, "5v on") == 0) {
+        HAL_GPIO_WritePin(M6_EN_GPIO_Port, M6_EN_Pin, GPIO_PIN_SET);
+        cli_send("OK 5V output enabled\r\n");
+        return;
+    }
+    if (strcmp(line, "5v off") == 0) {
+        HAL_GPIO_WritePin(M6_EN_GPIO_Port, M6_EN_Pin, GPIO_PIN_RESET);
+        cli_send("OK 5V output disabled\r\n");
         return;
     }
 
@@ -296,6 +312,12 @@ void CLI_Init(void)
 void CLI_Process(void)
 {
     uint8_t byte;
+
+    /* Print TEC power-good fault notification as soon as it is set by the control loop */
+    if (g_tec_pg_fault_pending) {
+        g_tec_pg_fault_pending = 0;
+        cli_send("\r\n!! TEC DISABLED — buck power-good fault (PG low) !!\r\n> ");
+    }
 
     /* Print trip notification as soon as it is set by the control loop */
     if (g_laser_temp_trip_pending) {
