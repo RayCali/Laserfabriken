@@ -117,6 +117,63 @@ Per spec §3.5 it's just "the 5V output." Control (`5v on`/`5v off`) is implemen
 
 ---
 
-## 7. Summary
+## 7. PID tuning procedure
+
+The PID parameters shipped in `tec_control.c` (`Kp=0.5, Ki=0.02, Kd=0.1`) are spec-mandated *default/reset* values (mjukvaruspecifikation §3.1), not tuned values — they exist so the system has a safe, defined starting point after a fresh flash, not because they're expected to hit the <5mK steady-state stability requirement out of the box. Real tuning has to happen against the actual crystal oven + TEC + buck thermal mass, which doesn't exist until the board is built.
+
+**Relevant fixed implementation details** (don't need to be re-derived during tuning):
+- Control loop runs every 100ms (`PID_PERIOD_S = 0.1f` in `tec_control.c`) — thermal systems like this are normally dominated by multi-second time constants, so 100ms is not the limiting factor
+- Integral term uses double precision (avoids long-run accumulation drift)
+- D-term is smoothed by an EMA low-pass filter (`D_ALPHA = 0.1`, compile-time constant, not CLI-exposed) to suppress measurement noise feeding into the derivative
+- Anti-windup via back-calculation is already implemented — integral won't runaway during saturation, but still watch for slow recovery if gains are too aggressive
+- Output is clamped to [−1.0, +1.0] before being handed to `BSP_TEC_SetOutput()`
+
+### 7.1 Recommended method — Ziegler–Nichols (ultimate gain)
+
+Chosen because it needs no system model, works well for slow first-order-ish thermal plants, and only requires the CLI commands already implemented.
+
+**Step 1 — find the critical gain:**
+```
+set crystal.ki 0
+set crystal.kd 0
+set crystal.kp 0.1        (start low, increase gradually)
+status                    (repeat, watch T vs SP over time)
+```
+Increase `crystal.kp` in small steps until the temperature settles into a **sustained, constant-amplitude** oscillation around the setpoint (not growing, not decaying). Record:
+- `Kc` = the Kp value at which this happens
+- `Pc` = the oscillation period, in seconds (time between two peaks)
+
+**Step 2 — Ziegler–Nichols starting point:**
+```
+Kp = 0.6  × Kc
+Ki = 1.2  × Kc / Pc
+Kd = 0.075 × Kc × Pc
+```
+Set these via `set crystal.kp/ki/kd <val>` — this is a starting point, not the final answer.
+
+**Step 3 — fine-tune:**
+
+Watch three specific symptoms in `status` output, and adjust one gain at a time:
+
+1. **Residual steady-state offset** — temperature settles near the setpoint but never quite reaches it (e.g. holds at 24.95°C when setpoint is 25.0°C). P alone can never fully cancel a constant disturbance (e.g. heat leaking to ambient) — that's the integral term's job, and it's too weak. → **nudge `Ki` up** slightly.
+
+2. **Overshoot / ringing** — after a setpoint step (`set crystal.setpoint <val>`, which auto-resets the integral), the temperature shoots past the target before settling (overshoot), or bounces back and forth several times (ringing) instead of approaching smoothly. The loop is reacting too aggressively. → **reduce `Kp` (and/or `Kd`)**.
+
+3. **Jittery/chattery output** — the `output` value in `status` flickers rapidly even while temperature sits still near setpoint. The D-term differentiates the temperature signal, which amplifies whatever measurement noise is present (even small ADC noise becomes large once differentiated) — feeding a noisy command to the TEC. → **reduce `Kd`** (the fixed `D_ALPHA` EMA filter only smooths so much).
+
+**Step 4 — verify against spec:**
+- Let the loop settle at a fixed setpoint and log `status` output (T column) for several minutes
+- Confirm peak-to-peak (or stddev) steady-state variation is **< 5 mK** per spec §3.1
+- Repeat independently for the laser TEC (`set laser.kp/ki/kd`) once spudkortet exists — on UGN hardware `TEC_LASER` is a no-op, so this can only be exercised via `set sim.laser_temp` in simulation for now
+
+### 7.2 Safety notes specific to this tuning pass
+
+- **Do not tune aggressively (large `Kp`) until §6.1 (DAC→VOUT scaling) is resolved.** Until the real VDAC→VOUT relationship is measured, a "moderate" commanded output could correspond to an unexpectedly large actual TEC voltage.
+- Start tuning with small setpoint deviations from ambient to keep TEC current low while gains are still unknown-safe.
+- Persist good values with `save` once satisfied — otherwise they're lost on next reset (parameters storage method is itself still an open decision, spec §7.1).
+
+---
+
+## 8. Summary
 
 Everything in §2–§4 is fixed and checked against the datasheets/schematics available. Nothing in §6 can be considered final until measured on the real board — in particular §6.1 (DAC scaling) and §6.2 (polarity direction) are safety-relevant and must be verified before running the TEC at any significant drive level.
