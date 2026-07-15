@@ -75,3 +75,12 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 
 # float printf support for CLI output (%f in vsnprintf)
 target_link_options(${CMAKE_PROJECT_NAME} PRIVATE -u _printf_float)
+
+# Generate a raw flat .bin alongside the .elf -- dfu-util/st-flash (used by
+# tools/firmware-updater) require this format, they cannot flash an .elf.
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} -O binary
+        $<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+        $<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>/${CMAKE_PROJECT_NAME}.bin
+    COMMENT "Generating ${CMAKE_PROJECT_NAME}.bin"
+)
