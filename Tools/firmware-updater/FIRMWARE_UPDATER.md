@@ -110,3 +110,34 @@ Do not consider this "done" until Phase 2 passes and §5's packaging gaps are cl
 - dfu-util: https://dfu-util.sourceforge.net/
 - stlink-org/stlink (st-flash, BSD-3): https://github.com/stlink-org/stlink
 - STM32 DFU VID:PID and general Zadig/dfu-util Windows pain points: https://www.hanselman.com/blog/how-to-fix-dfuutil-stm-winusb-zadig-bootloaders-and-other-firmware-flashing-issues-on-windows
+
+## 8. New developer setup
+
+Two different things you might want to do here — pick one:
+
+### I just want to run the tool (flash a `.bin`), not change any code
+
+You don't need any of this section. Use `dist\firmware-updater.exe` + `dist\dfu-util.exe` directly (already git-tracked, already built) — see `Docs/firmware_update_guide.md`. No compiler, no MSYS2, nothing to install beyond the one-time Zadig setup on whatever machine you're flashing from.
+
+### I want to change `main.c` and rebuild
+
+1. **Install MSYS2** — https://www.msys2.org/, default install path (`C:\msys64`, `build.ps1` hardcodes this). This is a real, from-scratch install; Windows doesn't ship it.
+2. **Install the mingw64 GCC package.** Open "MSYS2 MINGW64" from the Start menu (not the plain "MSYS2" shortcut — that's a different environment) and run:
+   ```
+   pacman -S mingw-w64-x86_64-gcc
+   ```
+3. **Build**: from a normal PowerShell (not the MSYS2 shell) in this directory:
+   ```powershell
+   .\build.ps1
+   ```
+   This compiles `main.c` and downloads `dfu-util.exe` into `.\build\` (gitignored — this is your scratch area, not what ships).
+4. **Test your change**: run `.\build\firmware-updater.exe` directly. If you don't have real hardware plugged in, that's fine — it should still run cleanly and report a "device not found" style error from `dfu-util`/`st-flash` (see §4/§6 for what "working correctly" looks like without hardware).
+5. **When you're done and want to actually ship the change**: run `.\build.ps1 -Publish` — this copies the freshly-built `firmware-updater.exe` (+ `dfu-util.exe`) into `dist\`, which *is* git-tracked. Then `git add Tools/firmware-updater/dist` and commit. **Don't skip this step** — `dist\` is what a non-dev pulls and runs; if you forget to publish, your change never actually ships even though it's sitting correctly in `build\` on your machine.
+
+### If you also need to test `--target=stlink` against a real Nucleo board
+
+That path needs `st-flash.exe` set up too, which isn't handled by `build.ps1` (deliberately — it's dev-only, see §5). Follow the manual one-time setup in §5's `st-flash.exe` bullet before `--target=stlink` will work. You'll also need a physical Nucleo board and to have run the one-time Zadig setup (§2/`Docs/firmware_update_guide.md`) against it once.
+
+### If you're touching the driver-signing / auto-install problem again
+
+Don't, unless something has fundamentally changed (e.g. the spec itself changes, or someone has a real code-signing certificate to embed). Read §2 first — it's a full writeup of why that path was tried and abandoned today, including the exact error and the reference-implementation detail (`requireAdministrator` manifest) that would be needed to even attempt it properly.
