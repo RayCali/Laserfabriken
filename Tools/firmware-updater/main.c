@@ -1,11 +1,13 @@
 /*
  * Laserfabriken Firmware Updater
  *
- * Windows-only tool that automates the STM32 USB firmware update flow
- * without requiring the customer to run Zadig manually, and without
- * installing any proprietary driver from the MCU manufacturer (ST) —
- * only the generic, Microsoft-provided WinUSB driver is installed, via
- * the open-source libwdi library.
+ * Windows-only tool that flashes STM32 firmware over USB. Per
+ * Docs/mjukvaruspecifikation.md §3.6, the WinUSB driver binding is a
+ * one-time manual Zadig step done by the customer at first setup -- this
+ * tool does not automate that step. See FIRMWARE_UPDATER.md for
+ * the one-time setup instructions and why an earlier libwdi-based
+ * auto-install approach was dropped (Windows' default driver-signature
+ * policy rejects the unsigned driver package that approach produced).
  *
  * Supports two targets, selected with --target=dfu or --target=stlink:
  *
@@ -18,127 +20,59 @@
  *   stlink  ST-Link/V2-1 debug probe (VID:PID 0483:374B) — the chip
  *           built into Nucleo dev boards. NOT usable on the production
  *           G431 UGN board (it has no ST-Link chip), but useful for
- *           testing this tool's driver-binding logic right now on a
- *           Nucleo, before the G431 board exists.
+ *           testing on a Nucleo before the G431 board exists.
  *           Flashed via bundled st-flash.exe (github.com/stlink-org/stlink).
  *
- * Flow (identical for both targets, only VID:PID + flash command differ):
- *   1. Enumerate USB devices, find the target by VID:PID.
- *   2. Prepare + install a WinUSB driver binding for that device via
- *      libwdi (automated equivalent of the manual Zadig steps).
- *   3. Shell out to the appropriate bundled flashing tool.
- *
- * STATUS: written and reviewed against the libwdi.h API on paper (see
- * FIRMWARE_UPDATER_HANDOFF.md for exactly what was and wasn't verified).
- * NOT YET BUILT OR RUN ON WINDOWS. NOT YET TESTED AGAINST REAL HARDWARE.
+ * Both dfu-util and st-flash report their own "device not found" errors
+ * if the WinUSB driver hasn't been bound yet -- see the one-time setup
+ * note printed on failure below.
  */
 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <windows.h>
-#include "libwdi.h"
-
-/* --- Per-target configuration ---------------------------------------- */
 
 typedef struct {
-    const char    *arg_name;  /* value passed after --target= */
-    const char    *label;     /* human-readable name for console messages */
-    unsigned short vid;
-    unsigned short pid;
+    const char *arg_name;  /* value passed after --target= */
+    const char *label;     /* human-readable name for console messages */
 } target_config_t;
 
 static const target_config_t TARGET_CONFIGS[] = {
-    { "dfu",    "STM32 DFU-bootloader (produktionskort, G431 UGN)", 0x0483, 0xDF11 },
-    { "stlink", "ST-Link/V2-1 (Nucleo-utvecklingskort)",            0x0483, 0x374B },
+    { "dfu",    "STM32 DFU bootloader (production board, G431 UGN)" },
+    { "stlink", "ST-Link/V2-1 (Nucleo dev board)" },
 };
 #define NUM_TARGETS (sizeof(TARGET_CONFIGS) / sizeof(TARGET_CONFIGS[0]))
 
 #define FLASH_BASE_ADDR "0x08000000"  /* STM32 internal flash base — standard across the series */
-#define INF_NAME        "laserfabriken_stm32.inf"
-#define DRIVER_DIR      "usb_driver"
 
 static void wait_for_enter(void)
 {
-    printf("\nTryck Enter for att stanga...\n");
+    printf("\nPress Enter to close...\n");
     (void)getchar();
 }
 
 /*
- * Find the target device in the enumerated list, install a WinUSB
- * binding for it via libwdi, and clean up.
- *
- * Returns 0 on success, non-zero on failure.
+ * Directory this .exe was launched from. Bundled tools (dfu-util.exe,
+ * st-flash.exe) live next to it, but system() shelling out to a bare
+ * "dfu-util.exe" is not reliable -- confirmed on real hardware that
+ * cmd.exe's bare-command search does not always check the current
+ * directory (depends on how the caller launched the current directory
+ * is set, e.g. a desktop shortcut with a different "Start in" folder).
+ * Always build an explicit path instead.
  */
-static int install_winusb_driver(const target_config_t *target)
+static int get_exe_dir(char *buf, size_t size)
 {
-    struct wdi_device_info *list = NULL;
-    struct wdi_device_info *dev  = NULL;
-    struct wdi_options_create_list    list_opts = {0};
-    struct wdi_options_prepare_driver prep_opts = {0};
-    struct wdi_options_install_driver inst_opts = {0};
-    int r;
+    char *last_sep;
 
-    list_opts.list_all         = TRUE;  /* include devices that already have some driver bound */
-    list_opts.list_hubs        = FALSE;
-    list_opts.trim_whitespaces = TRUE;
-
-    r = wdi_create_list(&list, &list_opts);
-    if (r != WDI_SUCCESS) {
-        printf("Kunde inte lista USB-enheter: %s\n", wdi_strerror(r));
-        return r;
-    }
-
-    for (struct wdi_device_info *d = list; d != NULL; d = d->next) {
-        if (d->vid == target->vid && d->pid == target->pid) {
-            dev = d;
-            break;
-        }
-    }
-
-    if (dev == NULL) {
-        printf("Hittade ingen enhet av typen '%s' (VID=0x%04X PID=0x%04X).\n",
-               target->label, target->vid, target->pid);
-        if (strcmp(target->arg_name, "dfu") == 0) {
-            printf("Kontrollera att kortet ar anslutet via USB och i DFU-lage\n"
-                   "(BOOT0 hoog vid reset/strompaslag).\n");
-        } else {
-            printf("Kontrollera att Nucleo-kortet ar anslutet via ST-Link-USB-porten.\n");
-        }
-        wdi_destroy_list(list);
+    if (GetModuleFileNameA(NULL, buf, (DWORD)size) == 0) {
         return -1;
     }
-
-    printf("Hittade enhet: %s\n", dev->desc ? dev->desc : "(inget namn rapporterat)");
-
-    prep_opts.driver_type  = WDI_WINUSB;
-    prep_opts.vendor_name  = "Laserfabriken";
-    /* Leave disable_cat / disable_signing / use_wcid_driver / external_inf at
-     * their zero-initialised defaults — TODO verify these are sane defaults
-     * for an unsigned/self-signed driver package on a clean Windows install.
-     * See handoff doc "Known risk areas". */
-
-    r = wdi_prepare_driver(dev, DRIVER_DIR, INF_NAME, &prep_opts);
-    if (r != WDI_SUCCESS) {
-        printf("Kunde inte forbereda drivrutinspaket: %s\n", wdi_strerror(r));
-        wdi_destroy_list(list);
-        return r;
+    last_sep = strrchr(buf, '\\');
+    if (last_sep == NULL) {
+        return -1;
     }
-
-    printf("Installerar WinUSB-drivrutin (ett UAC-fonster kan visas — svara Ja)...\n");
-
-    /* inst_opts.hWnd left NULL — console app, no parent window.
-     * pending_install_timeout left 0 — TODO verify 0 means "use library
-     * default" rather than "don't wait at all"; see handoff doc. */
-    r = wdi_install_driver(dev, DRIVER_DIR, INF_NAME, &inst_opts);
-    if (r != WDI_SUCCESS) {
-        printf("Drivrutinsinstallation misslyckades: %s\n", wdi_strerror(r));
-        wdi_destroy_list(list);
-        return r;
-    }
-
-    printf("WinUSB-drivrutin installerad.\n");
-    wdi_destroy_list(list);
+    *last_sep = '\0';
     return 0;
 }
 
@@ -148,8 +82,15 @@ static int install_winusb_driver(const target_config_t *target)
  */
 static int flash_firmware(const target_config_t *target, const char *bin_path)
 {
+    char exe_dir[512];
     char cmd[1024];
+    char cmd_wrapped[1030];
     int  ret;
+
+    if (get_exe_dir(exe_dir, sizeof(exe_dir)) != 0) {
+        printf("Could not determine this program's own directory.\n");
+        return -1;
+    }
 
     if (strcmp(target->arg_name, "dfu") == 0) {
         /* -a 0            : DFU alt-setting 0 (internal flash on STM32)
@@ -162,30 +103,41 @@ static int flash_firmware(const target_config_t *target, const char *bin_path)
          * whether the STM32G431's DFU bootloader needs :force or :mass-erase
          * variants — see handoff doc. */
         snprintf(cmd, sizeof(cmd),
-                 "dfu-util.exe -a 0 -s %s:leave -D \"%s\"",
-                 FLASH_BASE_ADDR, bin_path);
+                 "\"%s\\dfu-util.exe\" -a 0 -s %s:leave -D \"%s\"",
+                 exe_dir, FLASH_BASE_ADDR, bin_path);
     } else if (strcmp(target->arg_name, "stlink") == 0) {
         /* st-flash write <file> <address> — from github.com/stlink-org/stlink.
          * TODO verify exact syntax against whatever release version is
          * bundled; st-flash's CLI has changed slightly across versions. */
         snprintf(cmd, sizeof(cmd),
-                 "st-flash.exe write \"%s\" %s",
-                 bin_path, FLASH_BASE_ADDR);
+                 "\"%s\\st-flash.exe\" write \"%s\" %s",
+                 exe_dir, bin_path, FLASH_BASE_ADDR);
     } else {
-        printf("Okant mal: %s\n", target->arg_name);
+        printf("Unknown target: %s\n", target->arg_name);
         return -1;
     }
 
-    printf("Flashar firmware: %s\n", bin_path);
-    printf("(kor: %s)\n", cmd);
+    printf("Flashing firmware: %s\n", bin_path);
+    printf("(running: %s)\n", cmd);
 
-    ret = system(cmd);
+    /* cmd.exe mis-parses a command line that starts with a quoted path
+     * unless the ENTIRE line is also wrapped in an outer pair of quotes
+     * (confirmed on real hardware: without this, cmd.exe truncated the
+     * quoted exe path at its first space and reported it as an unknown
+     * command). This is a documented cmd.exe /c quirk, not specific to
+     * this tool. */
+    snprintf(cmd_wrapped, sizeof(cmd_wrapped), "\"%s\"", cmd);
+
+    ret = system(cmd_wrapped);
     if (ret != 0) {
-        printf("Flashningskommandot misslyckades (returkod %d).\n", ret);
+        printf("Flash command failed (return code %d).\n"
+               "If this looks like a 'device not found' error, the WinUSB\n"
+               "driver may not be bound yet -- run the one-time Zadig setup\n"
+               "described in FIRMWARE_UPDATER.md first.\n", ret);
         return ret;
     }
 
-    printf("Firmware flashad.\n");
+    printf("Firmware flashed.\n");
     return 0;
 }
 
@@ -208,9 +160,9 @@ int main(int argc, char *argv[])
     }
 
     if (bin_path == NULL) {
-        printf("Anvandning: %s [--target=dfu|stlink] <firmware.bin>\n\n", argv[0]);
-        printf("  --target=dfu     STM32 DFU-bootloader (produktionskort, G431 UGN) [default]\n");
-        printf("  --target=stlink  ST-Link/V2-1 (Nucleo-utvecklingskort, for testning)\n");
+        printf("Usage: %s [--target=dfu|stlink] <firmware.bin>\n\n", argv[0]);
+        printf("  --target=dfu     STM32 DFU bootloader (production board, G431 UGN) [default]\n");
+        printf("  --target=stlink  ST-Link/V2-1 (Nucleo dev board, for testing)\n");
         wait_for_enter();
         return 1;
     }
@@ -222,26 +174,20 @@ int main(int argc, char *argv[])
         }
     }
     if (target == NULL) {
-        printf("Okant mal '%s'. Anvand 'dfu' eller 'stlink'.\n", target_name);
+        printf("Unknown target '%s'. Use 'dfu' or 'stlink'.\n", target_name);
         wait_for_enter();
         return 1;
     }
 
-    printf("Mal: %s\n\n", target->label);
-
-    if (install_winusb_driver(target) != 0) {
-        printf("\nDrivrutinssteget misslyckades. Avbryter.\n");
-        wait_for_enter();
-        return 1;
-    }
+    printf("Target: %s\n\n", target->label);
 
     if (flash_firmware(target, bin_path) != 0) {
-        printf("\nFlashning misslyckades.\n");
+        printf("\nFlashing failed.\n");
         wait_for_enter();
         return 1;
     }
 
-    printf("\nKlart! Enheten startar om med den nya firmwaren.\n");
+    printf("\nDone! The device is restarting with the new firmware.\n");
     wait_for_enter();
     return 0;
 }
