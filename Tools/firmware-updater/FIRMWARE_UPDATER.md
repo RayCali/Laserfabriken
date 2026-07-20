@@ -73,7 +73,11 @@ Conclusion: the automation wasn't worth the risk/complexity it added, and wasn't
      ```powershell
      Copy-Item -Path "<extracted-zip>\Program Files (x86)\stlink" -Destination "C:\Program Files (x86)\" -Recurse -Force
      ```
-  3. Also copy `st-flash.exe` + `libstlink.dll` next to `firmware-updater.exe` for testing, plus `libusb-1.0.dll` (from MSYS2: `C:\msys64\mingw64\bin\libusb-1.0.dll`, after `pacman -S mingw-w64-x86_64-libusb` if not already installed).
+  3. Copy `st-flash.exe` + `libstlink.dll` (from the zip's `bin\` folder) next to `firmware-updater.exe` for testing.
+  4. Copy `libusb-1.0.dll` next to it too. If it's not already at `C:\msys64\mingw64\bin\libusb-1.0.dll`, install it first:
+     ```
+     pacman -S mingw-w64-x86_64-libusb
+     ```
 
   **Where these three files actually come from — they're not all from the same place, worth knowing before bundling anything for real:**
   - `st-flash.exe` and `libstlink.dll` are a matched pair from the same source: the stlink-org release zip (`bin\` folder inside it). `st-flash.exe` won't run without `libstlink.dll` sitting next to it — Windows loads it at startup, it's not baked into the `.exe`.
@@ -113,13 +117,15 @@ Do not consider this "done" until Phase 2 passes and §5's packaging gaps are cl
 
 ## 8. New developer setup
 
-Two different things you might want to do here — pick one:
+Three separate things, in order — you may only need the first one:
 
-### I just want to run the tool (flash a `.bin`), not change any code
+### A. Just running the tool (flash a `.bin`), no code changes
 
-You don't need any of this section. Use `dist\firmware-updater.exe` + `dist\dfu-util.exe` directly (already git-tracked, already built) — see `Docs/firmware_update_guide.md`. No compiler, no MSYS2, nothing to install beyond the one-time Zadig setup on whatever machine you're flashing from.
+Use `dist\firmware-updater.exe` + `dist\dfu-util.exe` directly (already git-tracked, already built) — see `Docs/firmware_update_guide.md`. No compiler, no MSYS2, nothing to install here. You still need the one-time Zadig step from **C** below against whatever device you're flashing.
 
-### I want to change `main.c` and rebuild
+### B. Changing `main.c` and rebuilding
+
+This gets you a compiled `.exe`. It does **not** by itself let you test against real hardware — for that, also do **C**.
 
 1. **Install MSYS2** — https://www.msys2.org/, default install path (`C:\msys64`, `build.ps1` hardcodes this). This is a real, from-scratch install; Windows doesn't ship it.
 2. **Install the mingw64 GCC package.** Open "MSYS2 MINGW64" from the Start menu (not the plain "MSYS2" shortcut — that's a different environment) and run:
@@ -131,12 +137,42 @@ You don't need any of this section. Use `dist\firmware-updater.exe` + `dist\dfu-
    .\build.ps1
    ```
    This compiles `main.c` and downloads `dfu-util.exe` into `.\build\` (gitignored — this is your scratch area, not what ships).
-4. **Test your change**: run `.\build\firmware-updater.exe` directly. If you don't have real hardware plugged in, that's fine — it should still run cleanly and report a "device not found" style error from `dfu-util`/`st-flash` (see §4/§6 for what "working correctly" looks like without hardware).
-5. **When you're done and want to actually ship the change**: run `.\build.ps1 -Publish` — this copies the freshly-built `firmware-updater.exe` (+ `dfu-util.exe`) into `dist\`, which *is* git-tracked. Then `git add Tools/firmware-updater/dist` and commit. **Don't skip this step** — `dist\` is what a non-dev pulls and runs; if you forget to publish, your change never actually ships even though it's sitting correctly in `build\` on your machine.
+4. **Test without hardware**: run it directly —
+   ```powershell
+   .\build\firmware-updater.exe
+   ```
+   Even with nothing plugged in, it should run cleanly and report a "device not found" style error from `dfu-util`/`st-flash` (see §4/§6 for what "working correctly" looks like at this stage). To test against a *real* device, see **C**.
+5. **When you're done and want to actually ship the change**, rebuild and copy into `dist\` (which *is* git-tracked) in one step:
+   ```powershell
+   .\build.ps1 -Publish
+   ```
+   Then stage and commit it:
+   ```powershell
+   git add Tools/firmware-updater/dist
+   git commit
+   ```
+   **Don't skip this step** — `dist\` is what a non-dev pulls and runs (see **A**); if you forget to publish, your change never actually ships even though it's sitting correctly in `build\` on your machine.
 
-### If you also need to test `--target=stlink` against a real Nucleo board
+### C. Testing against a real device (either target)
 
-That path needs `st-flash.exe` set up too, which isn't handled by `build.ps1` (deliberately — it's dev-only, see §5). Follow the manual one-time setup in §5's `st-flash.exe` bullet before `--target=stlink` will work. You'll also need a physical Nucleo board and to have run the one-time Zadig setup (§2/`Docs/firmware_update_guide.md`) against it once.
+**This is where Zadig comes in, and it applies to both targets, not just `stlink`.** Both `dfu-util` and `st-flash` talk to the device through `libusb`, which needs Windows' generic **WinUSB** driver bound to that specific device first — that one-time binding is exactly what Zadig does (see §2 for the full story on why it's a manual Zadig step and not automated).
+
+Key thing to understand: this is a **per-device** requirement, not a per-target-type one. `--target=dfu` and `--target=stlink` talk to two entirely different USB devices (different VID:PID), so each needs its *own* one-time Zadig run — doing it for one doesn't help the other, and you only need to do it for whichever one you're actually about to test.
+
+**If testing `--target=dfu`** (the real production path) — needs the G431 UGN board, which doesn't exist yet (§1). Blocked for now; when it does exist, run Zadig against the DFU device (`VID_0483&PID_DF11`) — same steps as `Docs/firmware_update_guide.md` walks a customer through, since it's the same device.
+
+**If testing `--target=stlink`** (Nucleo, available now):
+1. First, set up `st-flash.exe` itself (separate from Zadig) — follow §5's `st-flash.exe` bullet, a one-time per-dev-machine copy of its chip database.
+2. Then run Zadig against the Nucleo's ST-Link interface — note this is `0483:374B`, and specifically **interface 0**, not the whole composite device (see §2 for why that distinction matters — matching on VID:PID alone once caused this tool to bind the wrong interface). Steps, as actually done and confirmed working on 2026-07-15:
+   1. Download Zadig: https://github.com/pbatard/libwdi/releases (`zadig-2.9.exe` or newer)
+   2. Plug in the Nucleo via its USB port (the one wired to the onboard ST-Link, i.e. the normal/only USB port on most Nucleo boards)
+   3. Run Zadig — accept the UAC prompt
+   4. **Options → List All Devices** (must be checked, or the target won't show up)
+   5. In the device dropdown, find **ST-Link Debug (Interface 0)** — confirm via its hardware ID shown below the dropdown, which should read `USB\VID_0483&PID_374B&MI_00`. Don't pick the mass-storage or VCP entries under the same VID:PID (`MI_01`/`MI_02`) — wrong interface, won't work.
+   6. Select **WinUSB** in the driver box, click **Install Driver**
+   7. Confirm in Device Manager afterward: the "ST-Link Debug" entry should show Status `OK`, not `Error`
+
+Either way, it's a one-time step per dev machine per device — you won't need to repeat it once it's done.
 
 ### If you're touching the driver-signing / auto-install problem again
 
