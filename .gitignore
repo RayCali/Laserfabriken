@@ -16,6 +16,13 @@ build/
 *.hex
 *.map
 
+# stlink dev-testing tools (--target=stlink only, not customer-facing --
+# see Tools/firmware-updater/FIRMWARE_UPDATER.md §5/§8) -- kept locally
+# for convenience, deliberately not git-tracked like dist/'s dfu-util.exe is
+Tools/firmware-updater/dist/st-flash.exe
+Tools/firmware-updater/dist/libstlink.dll
+Tools/firmware-updater/dist/libusb-1.0.dll
+
 # System
 .DS_Store
 Thumbs.db

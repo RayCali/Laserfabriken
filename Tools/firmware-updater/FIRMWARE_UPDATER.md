@@ -137,11 +137,11 @@ This gets you a compiled `.exe`. It does **not** by itself let you test against 
    .\build.ps1
    ```
    This compiles `main.c` and downloads `dfu-util.exe` into `.\build\` (gitignored — this is your scratch area, not what ships).
-4. **Test without hardware**: run it directly —
+4. **Test without hardware**: the full command form is `firmware-updater.exe [--target=dfu|stlink] <path-to-bin-file>` — `--target=` (if given) always comes first, the `.bin` path always comes last, e.g.:
    ```powershell
-   .\build\firmware-updater.exe
+   .\build\firmware-updater.exe --target=stlink C:\path\to\some.bin
    ```
-   Even with nothing plugged in, it should run cleanly and report a "device not found" style error from `dfu-util`/`st-flash` (see §4/§6 for what "working correctly" looks like at this stage). To test against a *real* device, see **C**.
+   `--target=` can be omitted (defaults to `dfu`). Any `.bin` path works for this step, even a fake/empty one — even with nothing plugged in, it should run cleanly and report a "device not found" style error from `dfu-util`/`st-flash` (see §4/§6 for what "working correctly" looks like at this stage). To test against a *real* device, see **C**.
 5. **When you're done and want to actually ship the change**, rebuild and copy into `dist\` (which *is* git-tracked) in one step:
    ```powershell
    .\build.ps1 -Publish
@@ -153,17 +153,29 @@ This gets you a compiled `.exe`. It does **not** by itself let you test against 
    ```
    **Don't skip this step** — `dist\` is what a non-dev pulls and runs (see **A**); if you forget to publish, your change never actually ships even though it's sitting correctly in `build\` on your machine.
 
-### C. Testing against a real device (either target)
+### C. Testing against a real device (either target — both need their own Zadig run)
 
-**This is where Zadig comes in, and it applies to both targets, not just `stlink`.** Both `dfu-util` and `st-flash` talk to the device through `libusb`, which needs Windows' generic **WinUSB** driver bound to that specific device first — that one-time binding is exactly what Zadig does (see §2 for the full story on why it's a manual Zadig step and not automated).
+Both `dfu-util` and `st-flash` talk to their device through `libusb`, which needs Windows' generic **WinUSB** driver bound to that specific device first — that one-time binding is exactly what Zadig does (see §2 for the full story on why it's a manual Zadig step and not automated).
 
-Key thing to understand: this is a **per-device** requirement, not a per-target-type one. `--target=dfu` and `--target=stlink` talk to two entirely different USB devices (different VID:PID), so each needs its *own* one-time Zadig run — doing it for one doesn't help the other, and you only need to do it for whichever one you're actually about to test.
+This is a **per-device** requirement, not a per-target-type one: `--target=dfu` and `--target=stlink` talk to two entirely different USB devices (different VID:PID), so each needs its *own* one-time Zadig run against its *own* device. Doing it for one doesn't help the other. Below are both, side by side, on purpose — don't skip the `dfu` one just because it's currently blocked, it's equally real, just not runnable yet.
 
-**If testing `--target=dfu`** (the real production path) — needs the G431 UGN board, which doesn't exist yet (§1). Blocked for now; when it does exist, run Zadig against the DFU device (`VID_0483&PID_DF11`) — same steps as `Docs/firmware_update_guide.md` walks a customer through, since it's the same device.
+#### Testing `--target=dfu` (the real production path) — currently blocked
 
-**If testing `--target=stlink`** (Nucleo, available now):
+Needs the G431 UGN board, which doesn't exist yet (§1). Once it does, the steps are the same as `Docs/firmware_update_guide.md` walks a customer through (it's the same device, `0483:DF11`), summarized here:
+1. Download Zadig: https://github.com/pbatard/libwdi/releases (`zadig-2.9.exe` or newer)
+2. Put the board in DFU mode and connect it via USB (procedure still unconfirmed — see §5's BOOT0/J5 note)
+3. Run Zadig — accept the UAC prompt
+4. **Options → List All Devices**
+5. In the device dropdown, find the STM32 DFU device — confirm via its hardware ID: `USB\VID_0483&PID_DF11`
+6. Select **WinUSB**, click **Install Driver**
+7. Confirm in Device Manager afterward: the device should show Status `OK`
+
+This has never actually been run — unlike the `stlink` steps below, which are confirmed working on real hardware. Update this once the G431 board exists and this has actually been tried.
+
+#### Testing `--target=stlink` (Nucleo, available now) — confirmed working on real hardware, 2026-07-15
+
 1. First, set up `st-flash.exe` itself (separate from Zadig) — follow §5's `st-flash.exe` bullet, a one-time per-dev-machine copy of its chip database.
-2. Then run Zadig against the Nucleo's ST-Link interface — note this is `0483:374B`, and specifically **interface 0**, not the whole composite device (see §2 for why that distinction matters — matching on VID:PID alone once caused this tool to bind the wrong interface). Steps, as actually done and confirmed working on 2026-07-15:
+2. Then run Zadig — same steps as above, but against the Nucleo's ST-Link interface instead, which is `0483:374B`, and specifically **interface 0**, not the whole composite device (see §2 for why that distinction matters — matching on VID:PID alone once caused this tool to bind the wrong interface):
    1. Download Zadig: https://github.com/pbatard/libwdi/releases (`zadig-2.9.exe` or newer)
    2. Plug in the Nucleo via its USB port (the one wired to the onboard ST-Link, i.e. the normal/only USB port on most Nucleo boards)
    3. Run Zadig — accept the UAC prompt
@@ -171,6 +183,10 @@ Key thing to understand: this is a **per-device** requirement, not a per-target-
    5. In the device dropdown, find **ST-Link Debug (Interface 0)** — confirm via its hardware ID shown below the dropdown, which should read `USB\VID_0483&PID_374B&MI_00`. Don't pick the mass-storage or VCP entries under the same VID:PID (`MI_01`/`MI_02`) — wrong interface, won't work.
    6. Select **WinUSB** in the driver box, click **Install Driver**
    7. Confirm in Device Manager afterward: the "ST-Link Debug" entry should show Status `OK`, not `Error`
+3. Once both are set up, actually flash something (`--target=stlink` first, `.bin` path last):
+   ```powershell
+   .\build\firmware-updater.exe --target=stlink C:\path\to\some.bin
+   ```
 
 Either way, it's a one-time step per dev machine per device — you won't need to repeat it once it's done.
 
