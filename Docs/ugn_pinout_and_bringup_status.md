@@ -1,179 +1,291 @@
-# UGN Hardware Bring-Up Status — Pinout Rework & Datasheet Verification
+# UGN Hårdvaru-status — Pinout-ombyggnad & Datasheet-verifiering
 
-**Document:** UGN-STATUS-001
-**Date:** 2026-07-05
-**Author:** Board Architect Design AB
-
----
-
-## 1. Context
-
-The Laserfabriken UGN board schematic went through a pinout revision (SPI moved from SPI1 to SPI3, several signals reassigned to different ports/pins). This document tracks what was fixed in firmware to match the new schematic, what bugs were found and corrected against the ADS1220 / TPS563252 datasheets, and — most importantly — what still needs to be verified against **real hardware** before any of it can be considered "locked in."
-
-Nothing in this document has been tested on physical hardware yet. Everything below is either (a) fixed and verified against a datasheet/schematic on paper, or (b) flagged as needing a bench measurement.
+**Dokument:** UGN-STATUS-001
+**Datum:** 2026-07-05
+**Författare:** Board Architect Design AB
 
 ---
 
-## 2. Fixed — pinout rework (matches current schematic)
+## 1. Bakgrund
 
-Rewritten to match the new SPI3-based pinout: `main.h`, `gpio.c`, `spi.c`/`spi.h`, `usart.c`, `bsp_config.h`, `main.c`, comments in `bsp_tec.c`.
+UGN-kortets schema gick igenom en pinout-revision (SPI flyttades från SPI1 till SPI3, flera signaler flyttades till andra pinnar). Det här dokumentet håller reda på:
+- vad som fixats i mjukvaran för att matcha det nya schemat
+- vilka buggar som hittades och rättades mot ADS1220- och TPS563252-datablad
+- och — viktigast — vad som **fortfarande måste verifieras mot riktig hårdvara** innan det kan anses klart
 
-| Signal | Old pin | New pin | Notes |
+Ingenting i det här dokumentet är testat på fysisk hårdvara än. Allt nedan är antingen (a) fixat och kontrollerat mot ett datablad/schema på papper, eller (b) flaggat som att det behöver mätas på bänken.
+
+---
+
+## 2. Fixat — pinout-ombyggnad (matchar nuvarande schema)
+
+Omskrivet för att matcha den nya SPI3-baserade pinouten: `main.h`, `gpio.c`, `spi.c`/`spi.h`, `usart.c`, `bsp_config.h`, `main.c`, kommentarer i `bsp_tec.c`.
+
+| Signal | Gammal pinne | Ny pinne | Kommentar |
 |---|---|---|---|
 | ADC_CS | PA2 | PA4 | ADS1220 chip select |
-| DAC_CS | PA3 | PA3 | unchanged — reserved for DAC8562S (spudkortet) |
-| Crystal TEC DAC | PA4 (DAC1_CH1) | PA5 (DAC1_CH2) | internal STM32 DAC |
-| TEC_PG | PB2 | PA2 | TPS563252 power-good, open-drain, internal pull-up |
+| DAC_CS | PA3 | PA3 | oförändrad — reserverad för DAC8562S (spudkortet) |
+| Crystal TEC DAC | PA4 (DAC1_CH1) | PA5 (DAC1_CH2) | intern STM32-DAC |
+| TEC_PG | PB2 | PA2 | TPS563252 power-good, open-drain, intern pull-up |
 | TEC_EN | PB1 | PC5 | TPS563252 enable |
-| POLARITY | PC15 | PC6 | H-bridge direction select |
-| M6_EN | PB10 | PB0 | 5V rail enable |
-| SPI bus | SPI1 (PB3/PA6/PA7) | SPI3 (PC10/PC11/PC12), AF6 | ADS1220 + DAC8562S (spudkortet) |
-| DISPLAY_TX/RX | PB6/PB7 (USART1) | PA9/PA10 (USART1) | display UART |
-| DISPLAY_DO1/2/3 | PB11/PB12/PB13 | PB13/PB14/PB15 | unused GPIO to display connector |
+| POLARITY | PC15 | PC6 | H-brygga, val av riktning |
+| M6_EN | PB10 | PB0 | 5V-utgång, på/av |
+| SPI-buss | SPI1 (PB3/PA6/PA7) | SPI3 (PC10/PC11/PC12), AF6 | ADS1220 + DAC8562S (spudkortet) |
+| DISPLAY_TX/RX | PB6/PB7 (USART1) | PA9/PA10 (USART1) | display-UART |
+| DISPLAY_DO1/2/3 | PB11/PB12/PB13 | PB13/PB14/PB15 | oanvänd GPIO till displaykontakten |
 
-The `.ioc` file was synced to match these manual C edits (`PinState`, `GPIO_PuPd`, `functionlistsort` entries) so a CubeMX "Generate Code" run should reproduce the same output rather than clobber it.
+`.ioc`-filen är synkad med dessa manuella C-ändringar (`PinState`, `GPIO_PuPd`, `functionlistsort`), så att en CubeMX "Generate Code"-körning ska återge samma resultat istället för att skriva över det.
 
 ---
 
-## 3. Fixed — ADS1220 register bugs (verified against datasheet SBAS501D)
+## 3. Fixat — ADS1220-registerbuggar (verifierat mot datablad SBAS501D)
 
-Found while cross-checking `bsp_temp.c` against the ADS1220 datasheet register tables (Table 8-10, Table 8-13):
+Hittades vid genomgång av `bsp_temp.c` mot ADS1220:s registertabeller i databladet (Tabell 8-10, 8-13):
 
-| Constant | Was | Now | Bug |
+| Konstant | Var | Nu | Bugg |
 |---|---|---|---|
-| `ADS1220_MUX_AIN0_AVSS` | `0x60` (MUX=0110b) | `0x80` (MUX=1000b) | Measured AIN1−AIN0 (a floating differential pair — AIN1 isn't wired) instead of AIN0 vs AVSS single-ended |
-| `ADS1220_VREF_EXTERNAL_REFP0` | `0x08` | `0x40` | VREF[1:0] is bits 7:6, not 4:3. Old value accidentally set the PSW bit (bit 3) instead, leaving the ADC on its **internal 2.048V reference** while `raw_to_resistance()` assumed the external 2.9V rail — every temperature reading would have been wrong |
-| `BSP_ADS1220_DR_90SPS` | `0x20` (=45 SPS) | `0x40` (=90 SPS) | Mislabeled constant, currently unused (`BSP_ADS1220_DATA_RATE` uses the 20SPS constant, which was already correct) |
+| `ADS1220_MUX_AIN0_AVSS` | `0x60` (MUX=0110b) | `0x80` (MUX=1000b) | Mätte AIN1−AIN0 (ett flytande differentialpar — AIN1 är inte inkopplad) istället för AIN0 mot AVSS (single-ended) |
+| `ADS1220_VREF_EXTERNAL_REFP0` | `0x08` | `0x40` | VREF[1:0] sitter på bit 7:6, inte 4:3. Det gamla värdet satte av misstag PSW-biten (bit 3) istället, vilket lämnade ADC:n på sin **interna 2.048V-referens** medan `raw_to_resistance()` antog den externa 2.9V-skenan — varje temperaturavläsning skulle ha blivit fel |
+| `BSP_ADS1220_DR_90SPS` | `0x20` (=45 SPS) | `0x40` (=90 SPS) | Felmärkt konstant, används inte just nu (`BSP_ADS1220_DATA_RATE` använder 20SPS-konstanten, som redan var korrekt) |
 
-Also enabled **simultaneous 50Hz+60Hz notch rejection** (`ADS1220_FILTER_50_60HZ = 0x10`, was `0x00` = no rejection) since this product ships to markets with both mains frequencies — costs nothing at 20 SPS.
+Aktiverade också **samtidig 50Hz+60Hz brusfiltrering** (`ADS1220_FILTER_50_60HZ = 0x10`, var `0x00` = ingen filtrering) eftersom produkten säljs på marknader med båda nätfrekvenserna — kostar ingenting vid 20 SPS.
 
-**Verified correct, no change needed:** SPI mode 1 (CPOL=0/CPHA=1), command byte encodings (RESET/START/RDATA/WREG), RESET recovery delay, continuous-conversion timing margin vs. the 100ms main loop tick.
-
----
-
-## 4. Fixed — software spec compliance
-
-- **M6_EN (5V rail) default state**: was LOW at startup, spec §3.5 requires "active at startup" — changed to `GPIO_PIN_SET` in `gpio.c`.
-- **`5v on` / `5v off` CLI commands** added (`cli.c`), toggling M6_EN. Works over both USB-CLI and display UART since both feed the same `process_line()`.
-- **`BSP_TEC_PowerGood()`** added (`bsp_tec.c`/`.h`) — reads the TEC_PG pin, and is now wired into `TEC_Control_Tick()`: if PG reads low, the crystal TEC is disabled (`BSP_TEC_Disable`) and held off every tick until PG reads good again. A one-shot fault notification prints to the CLI (`!! TEC DISABLED — buck power-good fault (PG low) !!`), and `status` shows a `TEC buck: FAULT` line while the fault is active.
+**Verifierat korrekt, ingen ändring behövs:** SPI mode 1 (CPOL=0/CPHA=1), kommandobyte-kodning (RESET/START/RDATA/WREG), återhämtningsfördröjning efter RESET, timingmarginal för kontinuerlig konvertering mot 100ms-huvudloopen.
 
 ---
 
-## 5. Intentionally left alone (not bugs)
+## 4. Fixat — efterlevnad av mjukvaruspecifikationen
 
-- `bsp_laser.c`, `laser_control.c`, all `laser.*` CLI commands, `DAC_CS`/`DAC1_CH1` (PA4) macros — kept dormant for the future **spudkortet** board, which adds a laser diode. On UGN hardware these are no-ops (single TEC channel only, `TEC_LASER` calls return early in `bsp_tec.c`).
-
-### 5.1 Required PCB change for spudkortet — ADC_CS must move off PA4
-
-The STM32G431 only exposes **two** external GPIO pins for the internal DAC1: PA4 (DAC1_CH1) and PA5 (DAC1_CH2). On UGN, PA5 drives the crystal TEC amplitude and PA4 is used as `ADC_CS` (ADS1220 chip select) — there's no laser TEC hardware on UGN, so this is fine.
-
-On **spudkortet**, the laser TEC needs its own DAC amplitude channel, and the only one available is PA4 (DAC1_CH1). This means:
-
-- **ADC_CS must be moved to a different free GPIO** on the spudkortet schematic — it cannot stay on PA4
-- Resulting pin plan for spudkortet: PA4 = DAC1_CH1 (laser TEC amplitude), PA5 = DAC1_CH2 (crystal TEC amplitude, unchanged), PA3 = DAC_CS (DAC8562S, laser diode current — unchanged), ADC_CS = *(new pin, TBD)*
-
-This is a **hardware/schematic change**, not something fixable in firmware — flag it to whoever designs the spudkortet schematic before that board is ordered.
+- **M6_EN (5V-skena) startläge**: var LOW vid uppstart, spec §3.5 kräver "aktiv vid uppstart" — ändrat till `GPIO_PIN_SET` i `gpio.c`.
+- **`5v on` / `5v off` CLI-kommandon** tillagda (`cli.c`), växlar M6_EN. Fungerar över både USB-CLI och display-UART eftersom båda går genom samma `process_line()`.
+- **`BSP_TEC_PowerGood()`** tillagd (`bsp_tec.c`/`.h`) — läser TEC_PG-pinnen, och är nu inkopplad i `TEC_Control_Tick()`: om PG läser lågt stängs kristall-TEC:n av (`BSP_TEC_Disable`) och hålls avstängd varje varv tills PG läser bra igen. Ett engångsmeddelande skrivs ut till CLI:n (`!! TEC DISABLED — buck power-good fault (PG low) !!`), och `status` visar en `TEC buck: FAULT`-rad medan felet är aktivt.
 
 ---
 
-## 6. Open items — require real hardware to verify
+## 5. Medvetet lämnat orört (inte buggar)
 
-These are the things that must be measured/tested before the corresponding firmware behavior can be trusted.
+- `bsp_laser.c`, `laser_control.c`, alla `laser.*` CLI-kommandon, `DAC_CS`/`DAC1_CH1` (PA4)-makron — hålls vilande för det framtida **spudkortet**, som lägger till en laserdiod. På UGN-hårdvaran gör dessa ingenting (bara en TEC-kanal, `TEC_LASER`-anrop returnerar direkt i `bsp_tec.c`).
 
-### 6.1 TEC DAC → VOUT scaling (safety-relevant)
+### 5.1 Krävd PCB-ändring för spudkortet — ADC_CS måste flyttas från PA4
 
-`bsp_tec.c: internal_dac_set()` inverts the 12-bit DAC code (`4095 - code`) assuming the TPS563252 FB network's stated design points: VDAC=0V→VOUT=10.8V, VDAC=2.4V→VOUT=0V.
+STM32G431 har bara **två** externa GPIO-pinnar för den interna DAC1: PA4 (DAC1_CH1) och PA5 (DAC1_CH2). På UGN driver PA5 kristall-TEC:ns amplitud och PA4 används som `ADC_CS` (ADS1220 chip select) — det finns ingen laser-TEC-hårdvara på UGN, så det är okej.
 
-**Problem found:** with the confirmed FB resistors (R14=150k to VOUT, R15=3.3k to DACin, no third resistor to GND), the KCL math predicts:
-- VOUT crosses zero at VDAC ≈ **0.61V**, not 2.4V
-- VOUT would want to reach ≈**27.9V** at VDAC=0V, not 10.8V (the 10.8V figure is likely just the buck's VIN=12V duty-cycle ceiling, not something the resistor network produces)
+På **spudkortet** behöver laser-TEC:n sin egen DAC-amplitudkanal, och den enda lediga är PA4 (DAC1_CH1). Det betyder:
 
-**What to do on the bench:**
-1. Set DAC code to 0 (max commanded drive) → measure actual VOUT
-2. Set DAC code to 4095 (off) → measure actual VOUT
-3. If possible, sweep a few intermediate codes to find the real VOUT=0 crossover point
-4. Report values back so `internal_dac_set()` can be rescaled to use the full 12-bit range across only the *useful* VDAC sub-range (right now a portion of the low-drive command range likely does nothing, since VOUT is already clamped at 0 before VDAC reaches its "off" position)
+- **ADC_CS måste flyttas till en annan ledig GPIO** på spudkortets schema — den kan inte vara kvar på PA4
+- Resulterande pinnplan för spudkortet: PA4 = DAC1_CH1 (laser-TEC amplitud), PA5 = DAC1_CH2 (kristall-TEC amplitud, oförändrad), PA3 = DAC_CS (DAC8562S, laserdiodström — oförändrad), ADC_CS = *(ny pinne, ej bestämd)*
 
-### 6.2 POLARITY GPIO direction (heat vs. cool)
-
-`bsp_tec.c` assumes `GPIO_PIN_SET` = heat, `GPIO_PIN_RESET` = cool — a placeholder decision, not derived from the schematic. The M4 H-bridge's exact FET switching logic plus which physical TEC lead is wired to connector pin A vs. B would need to be traced to determine this from the schematic alone, and that wasn't conclusive from the available drawing.
-
-**What to do on the bench:** apply a known TEC, watch which face heats when POLARITY is driven high, adjust the sign convention in `BSP_TEC_SetOutput()` if wrong.
-
-
-### 6.4 SPI timing margins
-
-No explicit delays were added between `HAL_GPIO_WritePin` (CS assert) and the first `HAL_SPI_Transmit` call to satisfy ADS1220's `td(CSSC)` (50ns min). Relying on HAL call overhead being sufficient at a 4MHz SPI clock. Watch for corrupted/garbage ADC reads; add explicit delays if seen.
-
-### 6.5 ~~`BSP_TEC_PowerGood()` — not yet integrated~~ (done)
-
-Fixed: `TEC_Control_Tick()` now disables the crystal TEC and latches a fault flag (`g_tec_pg_fault`) whenever PG reads low, auto-clearing once PG reads good again. CLI prints a one-shot notification and `status` shows the fault while active. **Still needs a bench test**: force PG low (or simulate a buck fault) and confirm the TEC actually cuts out and recovers as expected.
-
-### 6.6 M6_EN (5V rail) — actual load unconfirmed
-
-Per spec §3.5 it's just "the 5V output." Control (`5v on`/`5v off`) is implemented, but what's actually connected to it, and what its default-on behavior implies at power-up, hasn't been confirmed against the real board.
-
-
+Det här är en **hårdvaru-/schemaändring**, inte något som kan fixas i mjukvaran — flagga det till den som ritar spudkortets schema innan det kortet beställs.
 
 ---
 
-## 7. PID tuning procedure
+## 6. Öppna punkter — kräver riktig hårdvara för att verifiera
 
-The PID parameters shipped in `tec_control.c` (`Kp=0.5, Ki=0.02, Kd=0.1`) are spec-mandated *default/reset* values (mjukvaruspecifikation §3.1), not tuned values — they exist so the system has a safe, defined starting point after a fresh flash, not because they're expected to hit the <5mK steady-state stability requirement out of the box. Real tuning has to happen against the actual crystal oven + TEC + buck thermal mass, which doesn't exist until the board is built.
+Det här är sådant som måste mätas/testas innan motsvarande mjukvarubeteende kan anses pålitligt.
 
-**Relevant fixed implementation details** (don't need to be re-derived during tuning):
-- Control loop runs every 100ms (`PID_PERIOD_S = 0.1f` in `tec_control.c`) — thermal systems like this are normally dominated by multi-second time constants, so 100ms is not the limiting factor
-- Integral term uses double precision (avoids long-run accumulation drift)
-- D-term is smoothed by an EMA low-pass filter (`D_ALPHA = 0.1`, compile-time constant, not CLI-exposed) to suppress measurement noise feeding into the derivative
-- Anti-windup via back-calculation is already implemented — integral won't runaway during saturation, but still watch for slow recovery if gains are too aggressive
-- Output is clamped to [−1.0, +1.0] before being handed to `BSP_TEC_SetOutput()`
+### 6.1 TEC DAC → VOUT-skalning (säkerhetsrelevant — läs detta noga)
 
-### 7.1 Recommended method — Ziegler–Nichols (ultimate gain)
+**Kort sagt:** Mjukvaran vet inte säkert vilken utspänning (VOUT) till TEC-elementet en given DAC-kod faktiskt ger. Räknat på schemats komponentvärden stämmer inte de angivna designpunkterna. Sannolik orsak: **R14 är troligen felavläst/felmonterad som 150k, när den enligt matematiken borde vara 15k** (se härledning nedan). Det här måste bekräftas på bänken innan man kör TEC:n med någon större effekt.
 
-Chosen because it needs no system model, works well for slow first-order-ish thermal plants, and only requires the CLI commands already implemented.
+**Bakgrund för hårdvarukollegan:** `bsp_tec.c: internal_dac_set()` inverterar den 12-bitars DAC-koden (`4095 - code`) och antar att TPS563252-kretsens FB-nätverk (feedback-nätverket, dvs de motstånd som talar om för buck-omvandlaren vilken spänning den ska ge) följer schemats angivna punkter: VDAC=0V→VOUT=10.8V, VDAC=2.4V→VOUT=0V.
 
-**Step 1 — find the critical gain:**
+**Komponenter i FB-nätverket:** R14 (mellan VOUT och FB-noden), R15 (mellan DAC-utgången och FB-noden), R16 (mellan FB-noden och GND). Bekräftade/antagna värden just nu: R14=150k, R15=3.3k, R16=1.2k.
+
+#### Härledning — varför förhållandet R14/R15 måste vara 4.5
+
+**Steg 1 — nodekvationen (Kirchhoffs strömlag).** Tre vägar möts i FB-noden: R14 till VOUT, R15 till VDAC, R16 till GND (0V). FB-pinnen på chippet drar i praktiken ingen ström (går in i en högimpedant komparator), så summan av strömmar in i noden är noll:
+
+```
+(VOUT − VFB)/R14 + (VDAC − VFB)/R15 + (0 − VFB)/R16 = 0
+```
+
+**Steg 2 — lös ut VFB.**
+
+```
+VOUT/R14 + VDAC/R15 = VFB · (1/R14 + 1/R15 + 1/R16)
+```
+
+Kalla `D = 1/R14 + 1/R15 + 1/R16` (det är här R16 kommer in):
+
+```
+VFB = (VOUT/R14 + VDAC/R15) / D
+```
+
+**Steg 3 — regulatorns villkor.** Chippet håller alltid VFB låst till sin fasta interna referensspänning `Vref` när det regulerar normalt:
+
+```
+Vref · D = VOUT/R14 + VDAC/R15        (*)
+```
+
+**Steg 4 — sätt in schemats två designpunkter.**
+
+Designpunkt A: VDAC=2.4V, VOUT=0V:
+```
+Vref · D = 0/R14 + 2.4/R15 = 2.4/R15        (Ekv A)
+```
+
+Designpunkt B: VDAC=0V, VOUT=10.8V:
+```
+Vref · D = 10.8/R14 + 0/R15 = 10.8/R14      (Ekv B)
+```
+
+**Steg 5 — här faller R16 bort.** `D` och `Vref` är fasta egenskaper hos kretsen — de ändras inte mellan de två mätpunkterna. Vänsterledet `Vref·D` är alltså samma tal i båda ekvationerna, så högerleden måste vara lika med varandra:
+
+```
+2.4/R15 = 10.8/R14
+  →  R14/R15 = 10.8/2.4 = 4.5
+```
+
+R16 finns inte kvar i sista raden — den satt inne i `D`, och `D` var en gemensam faktor som föll bort när Ekv A och Ekv B sattes lika. Så oavsett vilket värde R16 har (1.2k eller vad som helst) kan den inte ändra på det här specifika kravet: **R14/R15 måste vara 4.5 för att båda designpunkterna ska stämma.**
+
+#### Numerisk kontroll — faktorn 10 dyker upp
+
+Med dagens antagna värden (R14=150k, R15=3.3k, R16=1.2k):
+
+```
+D = 1/150000 + 1/3300 + 1/1200 = 0.0011430
+
+Från Ekv A:  Vref = (2.4/3300)   / D = 0.636 V
+Från Ekv B:  Vref = (10.8/150000) / D = 0.063 V
+```
+
+Det ska vara **samma** Vref i båda (det är en och samma fysiska referensspänning i chippet) — men de hamnar en faktor **~10** ifrån varandra. Det är precis den typen av avvikelse man får när en komponent är felavläst med en decimal.
+
+Testar man istället med **R14=15k** (R15=3.3k, R16=1.2k oförändrade):
+
+```
+D = 1/15000 + 1/3300 + 1/1200 = 0.0012030
+
+Från Ekv A:  Vref = (2.4/3300)  / D = 0.605 V
+Från Ekv B:  Vref = (10.8/15000) / D = 0.599 V
+```
+
+Nu hamnar båda på ≈0.60V — konsekvent inom avrundning. Det är den numeriska grunden för misstanken att **R14 i verkligheten är 15k, inte 150k**, och att hela kretsen annars stämmer precis som schemat avsåg.
+
+**Varför blir det inte ett orimligt högt VOUT i verkligheten (med dagens 150k-antagande)?** TPS563252 är en *buck*-omvandlare (spänningen kan bara gå ner, aldrig upp, jämfört med ingångsspänningen VIN=12V). Så även om uträkningen med R14=150k säger att FB-nätverket "vill" ha en mycket hög VOUT, kan kretsen fysiskt inte leverera mer än ungefär VIN minus lite förlust — runt **10-11V**. Regulatorn skulle då köra permanent mättad (fullt duty cycle) istället för att regulera normalt.
+
+**Vad som behöver göras på bänken (i prioritetsordning):**
+1. **Mät R14 fysiskt med multimeter** (helst med komponenten urkopplad ur kretsen) — är den 150k eller 15k? Det är den enskilt mest sannolika förklaringen och billigast att kolla först.
+2. Bekräfta att R16 verkligen sitter mellan FB-noden och GND (inte någon annan nod).
+3. Om R14 verkligen är 150k (dvs. mätningen inte stödjer 15k-teorin): sätt DAC-kod till 0 → mät verklig VOUT. Sätt DAC-kod till 4095 → mät verklig VOUT. Svep några mellanliggande koder för att hitta den verkliga brytpunkten där VOUT=0.
+4. Rapportera värdena så att `internal_dac_set()` kan räknas om för att använda hela 12-bitars kodintervallet över den faktiska, uppmätta VDAC→VOUT-relationen (annars riskerar stora delar av DAC:ens upplösning att slösas bort på koder som inte gör något, se härledningen ovan för varför).
+
+### 6.2 POLARITY GPIO-riktning (värme vs. kyla)
+
+`bsp_tec.c` antar att `GPIO_PIN_SET` = värme, `GPIO_PIN_RESET` = kyla — ett platshållarval, inte härlett från schemat. M4 H-bryggans exakta switch-logik plus vilken fysisk TEC-ledare som är kopplad till kontaktens pinne A respektive B skulle behöva spåras för att avgöra detta enbart från schemat, och det gick inte att fastställa säkert från tillgänglig ritning.
+
+**Vad som behöver göras på bänken:** koppla in en känd TEC, se vilken sida som blir varm när POLARITY drivs högt, justera tecken-konventionen i `BSP_TEC_SetOutput()` om det är fel.
+
+### 6.4 SPI-timingmarginaler
+
+Inga explicita fördröjningar har lagts till mellan `HAL_GPIO_WritePin` (CS aktiveras) och första `HAL_SPI_Transmit`-anropet för att uppfylla ADS1220:s `td(CSSC)` (minst 50ns). Förlitar sig på att HAL-anropets egen overhead räcker vid en SPI-klocka på 4MHz. Håll utkik efter korrupta/skräp-ADC-avläsningar; lägg till explicita fördröjningar om det förekommer.
+
+### 6.5 ~~`BSP_TEC_PowerGood()` — inte integrerad än~~ (klart)
+
+Fixat: `TEC_Control_Tick()` stänger nu av kristall-TEC:n och låser en felflagga (`g_tec_pg_fault`) närhelst PG läser lågt, och rensar den automatiskt när PG läser bra igen. CLI:n skriver ut ett engångsmeddelande och `status` visar felet medan det är aktivt. **Behöver fortfarande bänktestas**: tvinga PG lågt (eller simulera ett buck-fel) och bekräfta att TEC:n faktiskt stängs av och återhämtar sig som förväntat.
+
+### 6.6 M6_EN (5V-skena) — verklig last obekräftad
+
+Enligt spec §3.5 är det bara "5V-utgången". Styrningen (`5v on`/`5v off`) är implementerad, men vad som faktiskt är inkopplat på den, och vad dess på-som-standard-beteende innebär vid uppstart, har inte bekräftats mot det riktiga kortet.
+
+---
+
+## 7. PID-tuning-procedur
+
+PID-parametrarna som skickas med i `tec_control.c` (`Kp=0.5, Ki=0.02, Kd=0.1`) är spec-bestämda *standard-/återställningsvärden* (mjukvaruspecifikation §3.1), inte färdigtunade värden — de finns för att systemet ska ha en säker, definierad startpunkt efter en ny flashning, inte för att de förväntas klara <5mK stabilitetskravet direkt. Verklig tuning måste ske mot den riktiga kristallugnen + TEC + buck-termiska massan, som inte finns förrän kortet är byggt.
+
+**Fasta implementationsdetaljer som är relevanta** (behöver inte härledas om under tuningen):
+- Kontrolloopen kör var 100ms (`PID_PERIOD_S = 0.1f` i `tec_control.c`) — termiska system som det här domineras normalt av tidskonstanter på flera sekunder, så 100ms är inte den begränsande faktorn
+- Integraltermen använder dubbel precision (undviker drift vid lång körning)
+- D-termen är utjämnad med ett EMA-lågpassfilter (`D_ALPHA = 0.1`, kompileringstidskonstant, inte CLI-exponerad) för att dämpa mätbrus som annars matas in i derivatan
+- Anti-windup via bakåträkning är redan implementerat — integraltermen "rusar" inte iväg vid mättnad, men håll ändå koll på långsam återhämtning om gainen är för aggressiv
+- Utsignalen klamras till [−1.0, +1.0] innan den skickas till `BSP_TEC_SetOutput()`
+
+### 7.1 Rekommenderad metod — Ziegler–Nichols (kritisk gain)
+
+Vald eftersom den inte kräver någon systemmodell, fungerar bra för långsamma termiska system, och bara kräver CLI-kommandon som redan finns.
+
+**Steg 1 — hitta den kritiska gainen:**
 ```
 set crystal.ki 0
 set crystal.kd 0
-set crystal.kp 0.1        (start low, increase gradually)
-status                    (repeat, watch T vs SP over time)
+set crystal.kp 0.1        (börja lågt, öka gradvis)
+status                    (upprepa, följ T vs SP över tid)
 ```
-Increase `crystal.kp` in small steps until the temperature settles into a **sustained, constant-amplitude** oscillation around the setpoint (not growing, not decaying). Record:
-- `Kc` = the Kp value at which this happens
-- `Pc` = the oscillation period, in seconds (time between two peaks)
+Öka `crystal.kp` i små steg tills temperaturen går in i en **konstant, oförändrad amplitud**-svängning runt börvärdet (varken växande eller avtagande). Notera:
+- `Kc` = Kp-värdet där detta händer
+- `Pc` = svängningsperioden i sekunder (tid mellan två toppar)
 
-**Step 2 — Ziegler–Nichols starting point:**
+**Steg 2 — Ziegler–Nichols startpunkt:**
 ```
 Kp = 0.6  × Kc
 Ki = 1.2  × Kc / Pc
 Kd = 0.075 × Kc × Pc
 ```
-Set these via `set crystal.kp/ki/kd <val>` — this is a starting point, not the final answer.
+Sätt dessa via `set crystal.kp/ki/kd <värde>` — det här är en startpunkt, inte det slutgiltiga svaret.
 
-**Step 3 — fine-tune:**
+**Steg 3 — finjustera:**
 
-Watch three specific symptoms in `status` output, and adjust one gain at a time:
+Håll koll på tre specifika symptom i `status`-utskriften, och justera en gain i taget:
 
-1. **Residual steady-state offset** — temperature settles near the setpoint but never quite reaches it (e.g. holds at 24.95°C when setpoint is 25.0°C). P alone can never fully cancel a constant disturbance (e.g. heat leaking to ambient) — that's the integral term's job, and it's too weak. → **nudge `Ki` up** slightly.
+1. **Kvarstående stationärt fel** — temperaturen lägger sig nära börvärdet men når det aldrig riktigt (t.ex. stannar på 24.95°C när börvärdet är 25.0°C). P-termen ensam kan aldrig helt eliminera en konstant störning (t.ex. värme som läcker ut mot omgivningen) — det är integraltermens jobb, och den är för svag. → **öka `Ki` något**.
 
-2. **Overshoot / ringing** — after a setpoint step (`set crystal.setpoint <val>`, which auto-resets the integral), the temperature shoots past the target before settling (overshoot), or bounces back and forth several times (ringing) instead of approaching smoothly. The loop is reacting too aggressively. → **reduce `Kp` (and/or `Kd`)**.
+2. **Överslag / ringning** — efter ett börvärdessteg (`set crystal.setpoint <värde>`, som automatiskt återställer integralen) skjuter temperaturen förbi målet innan den lägger sig (överslag), eller studsar fram och tillbaka flera gånger (ringning) istället för att närma sig mjukt. Loopen reagerar för aggressivt. → **minska `Kp` (och/eller `Kd`)**.
 
-3. **Jittery/chattery output** — the `output` value in `status` flickers rapidly even while temperature sits still near setpoint. The D-term differentiates the temperature signal, which amplifies whatever measurement noise is present (even small ADC noise becomes large once differentiated) — feeding a noisy command to the TEC. → **reduce `Kd`** (the fixed `D_ALPHA` EMA filter only smooths so much).
+3. **Ryckig/darrig utsignal** — `output`-värdet i `status` flimrar snabbt även när temperaturen ligger still nära börvärdet. D-termen deriverar temperatursignalen, vilket förstärker vilket mätbrus som än finns (även litet ADC-brus blir stort när det deriveras) — och matar ett brusigt kommando till TEC:n. → **minska `Kd`** (det fasta `D_ALPHA`-EMA-filtret dämpar bara så mycket).
 
-**Step 4 — verify against spec:**
-- Let the loop settle at a fixed setpoint and log `status` output (T column) for several minutes
-- Confirm peak-to-peak (or stddev) steady-state variation is **< 5 mK** per spec §3.1
-- Repeat independently for the laser TEC (`set laser.kp/ki/kd`) once spudkortet exists — on UGN hardware `TEC_LASER` is a no-op, so this can only be exercised via `set sim.laser_temp` in simulation for now
+**Steg 4 — verifiera mot spec:**
+- Låt loopen lägga sig vid ett fast börvärde och logga `status`-utskriften (T-kolumnen) i flera minuter
+- Bekräfta att topp-till-topp (eller standardavvikelse) för den stationära variationen är **< 5 mK** enligt spec §3.1
+- Upprepa oberoende för laser-TEC:n (`set laser.kp/ki/kd`) när spudkortet finns — på UGN-hårdvaran gör `TEC_LASER` ingenting, så det kan bara testas via `set sim.laser_temp` i simulering tills vidare
 
-### 7.2 Safety notes specific to this tuning pass
+### 7.2 Säkerhetsanmärkningar specifika för den här tuning-omgången
 
-- **Do not tune aggressively (large `Kp`) until §6.1 (DAC→VOUT scaling) is resolved.** Until the real VDAC→VOUT relationship is measured, a "moderate" commanded output could correspond to an unexpectedly large actual TEC voltage.
-- Start tuning with small setpoint deviations from ambient to keep TEC current low while gains are still unknown-safe.
-- Persist good values with `save` once satisfied — otherwise they're lost on next reset (parameters storage method is itself still an open decision, spec §7.1).
+- **Tuna inte aggressivt (stort `Kp`) förrän §6.1 (DAC→VOUT-skalning) är löst.** Innan det verkliga sambandet VDAC→VOUT är uppmätt kan en "måttlig" kommenderad utsignal motsvara en oväntat stor verklig TEC-spänning.
+- Börja tuningen med små börvärdesavvikelser från omgivningstemperatur för att hålla TEC-strömmen låg medan gainen fortfarande är okänt-osäker.
+- Spara bra värden med `save` när ni är nöjda — annars går de förlorade vid nästa reset (metoden för att spara parametrar permanent är själv fortfarande ett öppet beslut, spec §7.1).
 
 ---
 
-## 8. Summary
+## 8. Sammanfattning
 
-Everything in §2–§4 is fixed and checked against the datasheets/schematics available. Nothing in §6 can be considered final until measured on the real board — in particular §6.1 (DAC scaling) and §6.2 (polarity direction) are safety-relevant and must be verified before running the TEC at any significant drive level.
+Allt i §2–§4 är fixat och kontrollerat mot tillgängliga datablad/scheman. Ingenting i §6 kan anses klart förrän det är uppmätt på det riktiga kortet — särskilt §6.1 (DAC-skalning) och §6.2 (polaritetsriktning) är säkerhetsrelevanta och måste verifieras innan TEC:n körs med någon större drivstyrka.
+
+---
+
+## 9. Bänktest-checklista — ordning för första hårdvarutestet
+
+Den här ordningen löser det olösta (DAC-skalning, §6.1) innan TEC:n någonsin körs med verklig kraft. Testa **inte** polaritet (§6.2) före DAC-skalningen — det skulle innebära att driva TEC:n med en okänd, potentiellt för hög spänning bara för att hitta rätt tecken.
+
+**0. Innan ström sätts på alls**
+- Visuell koll av kortet (inga uppenbara lödfel, kortslutningar, löst sittande komponenter)
+- **Mät R14 med multimeter** (helst urlött/urkopplad ur kretsen för en ren mätning) — är den 150k eller 15k? Kräver ingen ström och avgör direkt om §6.1-teorin stämmer, innan ni ens börjar gissa med spänning på TEC:n.
+
+**1. Första strömpåslag — utan att röra TEC-utgången**
+- Koppla in USB-CLI, kör `status`, bekräfta att kortet svarar och att temperaturavläsningarna ser rimliga ut (bekräftar att SPI/ADS1220 fungerar, §6.4 — inga skräpvärden)
+- Testa `5v on`/`5v off` (M6_EN, §6.6) och bekräfta med multimeter vad som faktiskt ligger på den skenan. Observera att M6_EN är satt HIGH redan i den råa GPIO-initieringen (`gpio.c`), dvs. 5V-skenan är strömsatt direkt vid uppstart, innan CLI:n ens är ansluten — kör `5v off` direkt efter uppstart om ni vill ha den avstängd tills lasten är bekräftad.
+
+**2. Verifiera säkerhetsmekanismen innan ni litar på den (§6.5)**
+- Det finns **inget CLI-kommando** för att stänga av TEC_EN manuellt (`BSP_TEC_Init()` slår på TEC_EN automatiskt vid uppstart, och bara `TEC_Control_Tick()`s egen PG-felhantering stänger av den igen) — så trigga inte felet via EN.
+- Trigga istället ett PG-fel direkt vid mikrokontrollern: **kortslut TEC_PG (PA2) till GND med en trådstump/jumper** (ofarligt, bara en digital ingång med intern pull-up). Bekräfta att `TEC DISABLED — buck power-good fault`-meddelandet dyker upp, att utgången faktiskt stängs av, och att den återhämtar sig när jumpern släpps.
+- Vill ni även bekräfta att buck-kretsen *själv* drar ner PG vid ett riktigt fel (inte bara att firmware svarar rätt på en spoofad signal): sänk VIN under UVLO-tröskeln med en justerbar labbnätaggregat.
+- Gör det här före de mer aggressiva DAC/PID-testerna nedan — ni vill veta att skyddet fungerar innan ni behöver lita på det.
+
+**3. Försiktig DAC-svepning (nu när R14 är känd)**
+- Om R14=15k bekräftades i steg 0: ni har redan en bra uppskattning av rätt skalning — bekräfta ändå med multimeter, men ni vet ungefär vad ni väntar er
+- Om R14=150k bekräftades (dvs. teorin stämde inte): gå **stegvis**, inte direkt till DAC-kod 0. Börja vid DAC=4095 (av, ska ge ~0V), öka sedan drivningen i små steg medan ni håller ett öga på VOUT med multimeter hela tiden — stanna omedelbart om VOUT beter sig oväntat
+- Notera de verkliga brytpunkterna (var VOUT=0, var VOUT=max) — det är det som ska in i `internal_dac_set()` efteråt
+
+**4. Polaritetstest (§6.2) — nu, med känd säker spänningsnivå**
+- Använd en låg, bekräftat säker DAC-kod från steg 3, driv POLARITY högt, känn/mät vilken sida som blir varm
+- Justera tecken-konventionen i `BSP_TEC_SetOutput()` om det är omvänt mot antagandet
+
+**5. PID-tuning (§7) — sist, som redan sagt ovan**
+- Börja med litet `Kp`, små börvärdesavvikelser från omgivningstemperatur
+- Följ Ziegler-Nichols-proceduren i §7.1
+
+**Vad ni annars lätt missar:**
+- **Strömbegränsad labbnätaggregat** om ni har tillgång till en — mycket säkrare än väggadapter för de första testerna, ni kan då fysiskt inte mata mer ström än ni ställt in oavsett vad som går fel
+- **Skriv ner alla mätvärden** (R14, VOUT vid olika DAC-koder, vilken sida som blev varm) så dokumentet kan uppdateras direkt efteråt med verkliga siffror istället för antaganden
+- **Lämna inte kortet strömsatt utan uppsikt** under de första testerna, särskilt innan PG-skyddet är bekräftat fungera
+- Ha multimetern på VOUT **kontinuerligt** under DAC-svepningen, inte bara enstaka mätpunkter — ni vill se om något hoppar oväntat mellan koderna

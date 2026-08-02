@@ -23,9 +23,9 @@ static void dac8562_write(uint8_t ch_select, uint16_t code)
         (uint8_t)(code >> 8),
         (uint8_t)(code & 0xFFu)
     };
-    HAL_GPIO_WritePin(BSP_DAC_CS_PORT, BSP_DAC_CS_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(BSP_LASER_CS_PORT, BSP_LASER_CS_PIN, GPIO_PIN_RESET);
     HAL_SPI_Transmit(BSP_SPI_BUS, tx, 3, 10);
-    HAL_GPIO_WritePin(BSP_DAC_CS_PORT, BSP_DAC_CS_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(BSP_LASER_CS_PORT, BSP_LASER_CS_PIN, GPIO_PIN_SET);
 }
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
@@ -34,9 +34,9 @@ void BSP_Laser_Init(void)
 {
     /* Power-on reset: CMD=0x28, data=0x0001 resets DAC8562S internal registers */
     uint8_t reset_tx[3] = { 0x28u, 0x00u, 0x01u };
-    HAL_GPIO_WritePin(BSP_DAC_CS_PORT, BSP_DAC_CS_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(BSP_LASER_CS_PORT, BSP_LASER_CS_PIN, GPIO_PIN_RESET);
     HAL_SPI_Transmit(BSP_SPI_BUS, reset_tx, 3, 10);
-    HAL_GPIO_WritePin(BSP_DAC_CS_PORT, BSP_DAC_CS_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(BSP_LASER_CS_PORT, BSP_LASER_CS_PIN, GPIO_PIN_SET);
 
     dac8562_write(0u, 0u); /* DAC A = 0 (laser current = 0) */
 }
