@@ -1,6 +1,6 @@
 # Firmware Updater — Handoff
 
-**Status (2026-07-15): Phase 1 PASSED on real hardware.** `firmware-updater.exe --target=stlink Laserfabriken_v1.bin` successfully flashed real firmware to a real Nucleo F401RE — `st-flash` reported `Flash written and verified! jolly good!`. This followed a same-day architecture change (see §1) away from an earlier automated-driver-install design that turned out to be solving a problem the software spec didn't actually ask for.
+**Status (2026-07-15): Phase 1 PASSED on real hardware.** `firmware-updater.exe --target=stlink Laserfabriken.bin` successfully flashed real firmware to a real Nucleo F401RE — `st-flash` reported `Flash written and verified! jolly good!`. This followed a same-day architecture change (see §1) away from an earlier automated-driver-install design that turned out to be solving a problem the software spec didn't actually ask for.
 
 If you're a Claude Code instance picking this up: read this whole file before touching anything.
 

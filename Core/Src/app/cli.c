@@ -305,7 +305,7 @@ static void process_line(char *line)
 
 void CLI_Init(void)
 {
-    cli_send("\r\n=== Laserfabriken v2 ===\r\n");
+    cli_send("\r\n=== Laserfabriken ===\r\n");
     cli_send("Type 'help' for commands\r\n> ");
 }
 
