@@ -50,6 +50,17 @@ extern float   g_sim_laser_temp_C;
 extern uint8_t g_tec_pg_fault;         /* 1 = PG fault currently active */
 extern uint8_t g_tec_pg_fault_pending; /* set when fault begins, cleared after CLI prints */
 
+/*
+ * Manual DAC bench-test mode (CLI 'dac test on'/'dac test off'/'dac set').
+ * While set, TEC_Control_Tick() still reads temperature and updates the PID
+ * for display, but skips driving/disabling the crystal channel's DAC —
+ * otherwise the next 100 ms tick would silently overwrite whatever raw code
+ * a manual sweep just set via BSP_TEC_SetRawDAC(). Entering test mode forces
+ * the DAC to 4095 (confirmed-safe/inert) before this flag is set; leaving it
+ * forces 4095 again before handing control back to the PID loop.
+ */
+extern uint8_t g_tec_manual_test;
+
 /* Init both TEC channels and PID controllers with default parameters. */
 void TEC_Control_Init(void);
 

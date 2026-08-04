@@ -92,6 +92,11 @@ static void process_line(char *line)
                  "  laser off\r\n"
                  "  5v on\r\n"
                  "  5v off\r\n"
+                 "  dac test on           — pause crystal TEC PID, force raw DAC=4095 (safe)\r\n"
+                 "  dac set   <code>      — 0-4095, raw DAC write (requires 'dac test on')\r\n"
+                 "  polarity heat         — POLARITY pin HIGH (requires 'dac test on')\r\n"
+                 "  polarity cool         — POLARITY pin LOW  (requires 'dac test on')\r\n"
+                 "  dac test off          — force raw DAC=4095, resume PID control\r\n"
                  "  status\r\n"
                  "  save\r\n"
                  "  help\r\n");
@@ -176,6 +181,61 @@ static void process_line(char *line)
         HAL_GPIO_WritePin(M6_EN_GPIO_Port, M6_EN_Pin, GPIO_PIN_RESET);
         cli_send("OK 5V output disabled\r\n");
         return;
+    }
+
+    /* dac test on / dac test off / dac set <code> / polarity heat / polarity cool */
+    if (strcmp(line, "dac test on") == 0) {
+        g_tec_manual_test = 1;
+        BSP_TEC_SetRawDAC(4095u);
+        BSP_TEC_SetRawPolarity(false);
+        cli_send("OK manual DAC test mode ON — crystal TEC PID paused, raw DAC forced to 4095"
+                 " (safe/inert), polarity forced to cool. Use 'dac set <code>' to sweep DOWN"
+                 " from there, checking FB and PG after every step. Do not jump toward 0."
+                 " Use 'polarity heat'/'polarity cool' to change direction.\r\n");
+        return;
+    }
+    if (strcmp(line, "dac test off") == 0) {
+        BSP_TEC_SetRawDAC(4095u);
+        BSP_TEC_SetRawPolarity(false);
+        g_tec_manual_test = 0;
+        cli_send("OK raw DAC forced to 4095, polarity forced to cool, manual test mode OFF"
+                 " — PID control resumed\r\n");
+        return;
+    }
+    if (strcmp(line, "polarity heat") == 0) {
+        if (!g_tec_manual_test) {
+            cli_send("ERR: run 'dac test on' first\r\n");
+            return;
+        }
+        BSP_TEC_SetRawPolarity(true);
+        cli_send("OK polarity = heat (POLARITY pin HIGH)\r\n");
+        return;
+    }
+    if (strcmp(line, "polarity cool") == 0) {
+        if (!g_tec_manual_test) {
+            cli_send("ERR: run 'dac test on' first\r\n");
+            return;
+        }
+        BSP_TEC_SetRawPolarity(false);
+        cli_send("OK polarity = cool (POLARITY pin LOW)\r\n");
+        return;
+    }
+    {
+        unsigned dac_code;
+        if (sscanf(line, "dac set %u", &dac_code) == 1) {
+            if (!g_tec_manual_test) {
+                cli_send("ERR: run 'dac test on' first\r\n");
+                return;
+            }
+            if (dac_code > 4095u) {
+                cli_send("ERR: code must be 0-4095\r\n");
+                return;
+            }
+            BSP_TEC_SetRawDAC((uint16_t)dac_code);
+            cli_sendf("OK raw DAC = %u  -- measure FB now.  PG=%s\r\n",
+                      dac_code, BSP_TEC_PowerGood() ? "GOOD" : "LOW/FAULT");
+            return;
+        }
     }
 
     /* sim off */

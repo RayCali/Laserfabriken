@@ -280,9 +280,20 @@ Den här ordningen löser det olösta (DAC-skalning, §6.1) innan TEC:n någonsi
 - Gör det här före de mer aggressiva DAC/PID-testerna nedan — ni vill veta att skyddet fungerar innan ni behöver lita på det.
 
 **3. Försiktig DAC-svepning (nu när R14 är känd)**
-- Om R14=15k bekräftades i steg 0: ni har redan en bra uppskattning av rätt skalning — bekräfta ändå med multimeter, men ni vet ungefär vad ni väntar er
-- Om R14=150k bekräftades (dvs. teorin stämde inte): gå **stegvis**, inte direkt till DAC-kod 0. Börja vid DAC=4095 (av, ska ge ~0V), öka sedan drivningen i små steg medan ni håller ett öga på VOUT med multimeter hela tiden — stanna omedelbart om VOUT beter sig oväntat
-- Notera de verkliga brytpunkterna (var VOUT=0, var VOUT=max) — det är det som ska in i `internal_dac_set()` efteråt
+
+> **⚠ Incident (dokumenterad för framtida läsare):** en tidig version av det här steget ersatte `internal_dac_set()`s invertering med en rak (icke-inverterad) mappning, i tron att DAC-kod 0 (PID-utgång "av") då skulle ge VDAC≈0 och därmed VOUT≈0 — den "säkra" viloläget. Det var fel. Enligt FB-formeln i §6.1 (`VOUT = VREF + R14×(VREF/R16 + (VREF−VDAC)/R15)`) är det tvärtom: VDAC=0 maximerar `(VREF−VDAC)/R15`-termen, vilket tvingar fram det **högsta** VOUT-målet, inte det lägsta. Den "avstängda" viloläget kommenderade i praktiken bucken mot max-utgång mot en TEC-last, och bucken brändes. Den ursprungliga inverterade mappningen (kod 0 → VDAC≈max) är den bekräftat säkra: vid max VDAC blir VOUT-målet negativt (omöjligt för en buck), så kretsen går in i OVP-lås och slutar switcha helt — det är därför `internal_dac_set()` fortfarande använder `4095 - code_12bit`. **Svep aldrig direkt mot DAC-kod 0/rå-DAC=0 — svep alltid nedåt från rå-DAC=4095, i små steg, med FB och PG kontrollerade mellan varje steg.**
+
+Använd CLI:t istället för att skriva om `internal_dac_set()` för det här testet — det håller PID-loopen borta från DAC:n medan ni sveper manuellt:
+
+1. `dac test on` — pausar PID-drivningen av kristall-TEC:n och tvingar rå-DAC till 4095 (bekräftat säkert/inert läge: FB fastnar över OVP-tröskeln, bucken switchar aldrig, PG låg, ingen ström flyter).
+2. Mät FB (och VOUT om ni har fler mätpunkter) med multimeter. Bekräfta att det matchar det inerta läget innan ni fortsätter.
+3. `dac set 4095`, sedan stegvis nedåt i hopp om **100-200 steg** åt gången (t.ex. `dac set 3900`, `dac set 3700`, …) — **aldrig direkt till ett lågt värde**. Efter varje kommando: mät FB, och läs `PG=` i CLI-svaret (eller kör `status` för fullständig bild).
+4. Stanna **omedelbart** vid första tecken på att FB närmar sig 0.6V eller att `PG=GOOD` dyker upp — det är brytpunkten där bucken börjar switcha och regleras på riktigt. Fortsätt **inte** ned mot 0 "för att se hela intervallet".
+5. Om R14=15k bekräftades i steg 0 har ni redan en bra uppskattning av var brytpunkten borde ligga — bekräfta ändå empiriskt, men ni vet ungefär vad ni väntar er.
+6. Notera de verkliga brytpunkterna (rå-DAC-värdet där PG blir GOOD, motsvarande FB och VOUT) — det är det som ska in i `internal_dac_set()`s skalning efteråt.
+7. `dac test off` när ni är klara — det tvingar rå-DAC till 4095 igen och lämnar tillbaka kontrollen till PID-loopen.
+
+Ha strömbegränsad labbnätaggregat inkopplad under hela den här proceduren om ni har tillgång till en (se listan längst ner i det här kapitlet) — det är den enskilt bästa spärren mot att en felaktig brytpunkt bränner något igen.
 
 **4. Polaritetstest (§6.2) — nu, med känd säker spänningsnivå**
 - Använd en låg, bekräftat säker DAC-kod från steg 3, driv POLARITY högt, känn/mät vilken sida som blir varm

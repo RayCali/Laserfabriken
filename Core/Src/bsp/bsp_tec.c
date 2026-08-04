@@ -73,8 +73,16 @@ void BSP_TEC_Disable(TecChannel_t ch)
     if (ch != TEC_CRYSTAL)
         return;
 
+    /* Zero the TEC drive only -- do NOT touch EN here. The TPS563252 has
+     * its own non-latching UVLO/thermal protection and hiccup-mode UVP
+     * recovery; it retries on its own schedule regardless of what we do.
+     * Toggling EN off on a PG fault with no corresponding re-enable
+     * elsewhere previously left EN latched off permanently after the
+     * first fault, since nothing could turn it back on once the buck
+     * could no longer run. Leaving EN alone avoids that deadlock -- our
+     * job is only to make sure the TEC gets zero drive while PG isn't
+     * confirmed good, not to manage the buck's own fault recovery. */
     internal_dac_set(TEC_CRYSTAL, 0);
-    HAL_GPIO_WritePin(BSP_TEC_EN_PORT, BSP_TEC_EN_PIN, GPIO_PIN_RESET);
 }
 
 bool BSP_TEC_PowerGood(void)
@@ -82,4 +90,24 @@ bool BSP_TEC_PowerGood(void)
     /* TPS563252 PG is open-drain: pulled high externally when output is good,
      * driven low by the converter on fault (UVLO, OVP, thermal, etc.). */
     return HAL_GPIO_ReadPin(BSP_TEC_PG_PORT, BSP_TEC_PG_PIN) == GPIO_PIN_SET;
+}
+
+void BSP_TEC_SetRawDAC(uint16_t raw_code)
+{
+    /* No inversion, no clamping beyond the DAC's own 12-bit range -- this is
+     * a direct hardware poke for bench sweeps, not a control-loop path.
+     * Start any sweep at 4095 and step DOWN: raw=4095 (max VDAC) is the
+     * empirically confirmed inert state on this board (FB pinned above the
+     * OVP threshold, buck refuses to switch, PG low, no current flows).
+     * Moving toward 0 is what makes the buck start actually regulating --
+     * step in small increments and check FB/PG after each one instead of
+     * jumping toward 0 directly. */
+    HAL_DAC_SetValue(BSP_DAC, BSP_DAC_CH_CRYSTAL, DAC_ALIGN_12B_R, raw_code);
+    HAL_DAC_Start(BSP_DAC, BSP_DAC_CH_CRYSTAL);
+}
+
+void BSP_TEC_SetRawPolarity(bool heat)
+{
+    HAL_GPIO_WritePin(BSP_TEC_POLARITY_PORT, BSP_TEC_POLARITY_PIN,
+                       heat ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }
