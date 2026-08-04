@@ -71,7 +71,9 @@
 #define BSP_NTC_SH_C    1.838e-7f
 
 /* ── NTC voltage divider ─────────────────────────────────────────────────────
- * ADS1220 external reference = 2.9 V (REFP0 connected to V2.9 rail).
+ * ADS1220 external reference = STM32 VREFBUF output (SCALE2, enabled in
+ * main.c USER CODE BEGIN 2), routed to REFP0 via net "V2.9".
+ * Measured on bench: 2.899V
  * R_series = resistor in series with NTC.
  */
 #define BSP_NTC_VREF_V       2.9f

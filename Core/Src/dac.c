@@ -48,10 +48,6 @@ void MX_DAC1_Init(void)
     Error_Handler();
   }
 
-  /* DAC1_OUT1 (PA4) is intentionally NOT configured here — PA4 is
-   * repurposed as ADC_CS on the UGN board pinout (see bsp_config.h).
-   * Only DAC1_OUT2 (PA5, Crystal TEC amplitude) is used. */
-
   /** DAC channel OUT2 config
   */
   sConfig.DAC_HighFrequency = DAC_HIGH_FREQUENCY_INTERFACE_MODE_AUTOMATIC;
@@ -88,7 +84,6 @@ void HAL_DAC_MspInit(DAC_HandleTypeDef* dacHandle)
     __HAL_RCC_GPIOA_CLK_ENABLE();
     /**DAC1 GPIO Configuration
     PA5     ------> DAC1_OUT2
-    (PA4 excluded — repurposed as ADC_CS; see bsp_config.h)
     */
     GPIO_InitStruct.Pin = GPIO_PIN_5;
     GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;

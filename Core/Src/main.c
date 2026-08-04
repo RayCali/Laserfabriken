@@ -20,6 +20,7 @@
 #include "main.h"
 #include "dac.h"
 #include "spi.h"
+#include "ucpd.h"
 #include "usart.h"
 #include "usb_device.h"
 #include "gpio.h"
@@ -95,8 +96,9 @@ int main(void)
   MX_GPIO_Init();
   MX_DAC1_Init();
   MX_SPI3_Init();
-  MX_USART1_Init();
+  MX_USART1_UART_Init();
   MX_USB_Device_Init();
+  MX_UCPD1_Init();
   /* USER CODE BEGIN 2 */
   /* Enable the STM32's internal VREFBUF and drive it out on VREF+, which is
    * wired on this board to the ADS1220's REFP0 (net "V2.9"). Without this,
@@ -105,8 +107,14 @@ int main(void)
    * ADS1220's external reference input was floating.
    * HIZ must stay clear (0) -- HIZ=1 puts VREF+ in high-impedance (no
    * output), which is the state used when an external reference source
-   * drives the pin instead; that's not the case here. */
+   * drives the pin instead; that's not the case here.
+   * VRS is set to SCALE2 (~2.90V) to match laserfabriken_v2.ioc's
+   * SYS.VoltageScaling=SYSCFG_VREFBUF_VOLTAGE_SCALE2 -- CubeMX records that
+   * setting in the .ioc but doesn't generate code to apply it on this part,
+   * so it's done here by hand. Confirm the real output on REFP0 with a
+   * multimeter after flashing; don't assume it lands on exactly 2.90V. */
   VREFBUF->CSR &= ~VREFBUF_CSR_HIZ;
+  VREFBUF->CSR = (VREFBUF->CSR & ~VREFBUF_CSR_VRS) | VREFBUF_CSR_VRS_1;
   VREFBUF->CSR |= VREFBUF_CSR_ENVR;
   {
       /* Wait for the buffer to report ready (VRR), bounded so a fault here
@@ -178,12 +186,12 @@ void SystemClock_Config(void)
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
   {
     Error_Handler();
   }

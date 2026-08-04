@@ -26,8 +26,9 @@
 
 UART_HandleTypeDef huart1;
 
-/* USART1 init function — display bridge, PB6 (TX) / PB7 (RX), 115200 8N1 */
-void MX_USART1_Init(void)
+/* USART1 init function */
+
+void MX_USART1_UART_Init(void)
 {
 
   /* USER CODE BEGIN USART1_Init 0 */
@@ -96,7 +97,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     __HAL_RCC_GPIOA_CLK_ENABLE();
     /**USART1 GPIO Configuration
     PA9     ------> USART1_TX
-    PA10    ------> USART1_RX
+    PA10     ------> USART1_RX
     */
     GPIO_InitStruct.Pin = DISPLAY_TX_Pin|DISPLAY_RX_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
@@ -123,8 +124,8 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
     __HAL_RCC_USART1_CLK_DISABLE();
 
     /**USART1 GPIO Configuration
-    PB6     ------> USART1_TX
-    PB7     ------> USART1_RX
+    PA9     ------> USART1_TX
+    PA10     ------> USART1_RX
     */
     HAL_GPIO_DeInit(GPIOA, DISPLAY_TX_Pin|DISPLAY_RX_Pin);
 
@@ -137,3 +138,4 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 /* USER CODE BEGIN 1 */
 
 /* USER CODE END 1 */
+
