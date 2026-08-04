@@ -250,3 +250,50 @@ Håll koll på tre specifika symptom i `status`-utskriften, och justera en gain 
 ## 8. Sammanfattning
 
 Allt i §2–§4 är fixat och kontrollerat mot tillgängliga datablad/scheman. Ingenting i §6 kan anses klart förrän det är uppmätt på det riktiga kortet — särskilt §6.1 (DAC-skalning) och §6.2 (polaritetsriktning) är säkerhetsrelevanta och måste verifieras innan TEC:n körs med någon större drivstyrka.
+
+---
+
+## 9. Bänktest-checklista — ordning för första hårdvarutestet
+
+Den här ordningen löser det olösta (DAC-skalning, §6.1) innan TEC:n någonsin körs med verklig kraft. Testa **inte** polaritet (§6.2) före DAC-skalningen — det skulle innebära att driva TEC:n med en okänd, potentiellt för hög spänning bara för att hitta rätt tecken.
+
+**0. Innan ström sätts på alls**
+- Visuell koll av kortet (inga uppenbara lödfel, kortslutningar, löst sittande komponenter)
+- **Mät R14 med multimeter** (helst urlött/urkopplad ur kretsen för en ren mätning) — är den 150k eller 15k? Kräver ingen ström och avgör direkt om §6.1-teorin stämmer, innan ni ens börjar gissa med spänning på TEC:n.
+
+**1. Första strömpåslag — utan att röra TEC-utgången**
+- Koppla in USB-CLI, kör `status`, bekräfta att kortet svarar
+- **Verifiera ADC-avläsningen innan ni går vidare till DAC/TEC-testerna:**
+  - `T`-värdet i `status` ska ligga i ett rimligt rumstemperaturintervall (typiskt 15-30°C). Ett värde som är extremt orimligt (t.ex. under −100°C) är **inte** en riktig temperaturmätning — det är `raw_to_resistance()` i `bsp_temp.c` som faller tillbaka på ett "utanför intervall"-värde (1e9 Ω) när ADC-spänningen är ≤0V eller ≥VREF, vilket sedan matas genom Steinhart-Hart-formeln och ger ett absurt resultat. Det betyder att den *elektriska* mätningen är trasig, inte att kretsen faktiskt är −144°C kall.
+  - Om ni ser ett sånt orimligt värde, felsök i den här ordningen:
+    1. **Mät NTC:n direkt med multimeter** (motstånd, inte spänning) — ska vara några kΩ till några tiotals kΩ vid rumstemperatur, inte öppen krets (oändligt motstånd) eller kortslutning (0 Ω)
+    2. **Mät den externa referensspänningen** på REFP0/REFN0 (ADS1220) — ska vara ~2.9V enligt schemat. Om den saknas/är fel förklarar det direkt ett orimligt värde, eftersom hela beräkningen bygger på VREF.
+    3. **Kontrollera SPI-anslutningen** (§6.4) — särskilt att ADC_CS (PA4) faktiskt togglar (synlig med oscilloskop/logikanalysator om tillgängligt), annars kan ADS1220 svara med skräp eller inte svara alls
+    4. Om allt ovan ser bra ut men värdet ändå är fel: dubbelkolla att `raw` faktiskt är nollskild (`raw == 0` ger istället sentinelvärdet exakt −273.15°C i `status` — ett annat, mer uppenbart symptom som betyder "konvertering ännu inte klar", inte samma fel som ovan)
+  - Ett rimligt `T`-värde bekräftar att SPI/ADS1220-kedjan fungerar end-to-end — det är en förutsättning för att lita på DAC-svepningen i steg 3, eftersom ni annars inte kan skilja på "DAC-skalningen är fel" och "temperaturmätningen är fel" när ni tolkar resultaten
+- Testa `5v on`/`5v off` (M6_EN, §6.6) och bekräfta med multimeter vad som faktiskt ligger på den skenan. Observera att M6_EN är satt HIGH redan i den råa GPIO-initieringen (`gpio.c`), dvs. 5V-skenan är strömsatt direkt vid uppstart, innan CLI:n ens är ansluten — kör `5v off` direkt efter uppstart om ni vill ha den avstängd tills lasten är bekräftad.
+
+**2. Verifiera säkerhetsmekanismen innan ni litar på den (§6.5)**
+- Det finns **inget CLI-kommando** för att stänga av TEC_EN manuellt (`BSP_TEC_Init()` slår på TEC_EN automatiskt vid uppstart, och bara `TEC_Control_Tick()`s egen PG-felhantering stänger av den igen) — så trigga inte felet via EN.
+- Trigga istället ett PG-fel direkt vid mikrokontrollern: **kortslut TEC_PG (PA2) till GND med en trådstump/jumper** (ofarligt, bara en digital ingång med intern pull-up). Bekräfta att `TEC DISABLED — buck power-good fault`-meddelandet dyker upp, att utgången faktiskt stängs av, och att den återhämtar sig när jumpern släpps.
+- Vill ni även bekräfta att buck-kretsen *själv* drar ner PG vid ett riktigt fel (inte bara att firmware svarar rätt på en spoofad signal): sänk VIN under UVLO-tröskeln med en justerbar labbnätaggregat.
+- Gör det här före de mer aggressiva DAC/PID-testerna nedan — ni vill veta att skyddet fungerar innan ni behöver lita på det.
+
+**3. Försiktig DAC-svepning (nu när R14 är känd)**
+- Om R14=15k bekräftades i steg 0: ni har redan en bra uppskattning av rätt skalning — bekräfta ändå med multimeter, men ni vet ungefär vad ni väntar er
+- Om R14=150k bekräftades (dvs. teorin stämde inte): gå **stegvis**, inte direkt till DAC-kod 0. Börja vid DAC=4095 (av, ska ge ~0V), öka sedan drivningen i små steg medan ni håller ett öga på VOUT med multimeter hela tiden — stanna omedelbart om VOUT beter sig oväntat
+- Notera de verkliga brytpunkterna (var VOUT=0, var VOUT=max) — det är det som ska in i `internal_dac_set()` efteråt
+
+**4. Polaritetstest (§6.2) — nu, med känd säker spänningsnivå**
+- Använd en låg, bekräftat säker DAC-kod från steg 3, driv POLARITY högt, känn/mät vilken sida som blir varm
+- Justera tecken-konventionen i `BSP_TEC_SetOutput()` om det är omvänt mot antagandet
+
+**5. PID-tuning (§7) — sist, som redan sagt ovan**
+- Börja med litet `Kp`, små börvärdesavvikelser från omgivningstemperatur
+- Följ Ziegler-Nichols-proceduren i §7.1
+
+**Vad ni annars lätt missar:**
+- **Strömbegränsad labbnätaggregat** om ni har tillgång till en — mycket säkrare än väggadapter för de första testerna, ni kan då fysiskt inte mata mer ström än ni ställt in oavsett vad som går fel
+- **Skriv ner alla mätvärden** (R14, VOUT vid olika DAC-koder, vilken sida som blev varm) så dokumentet kan uppdateras direkt efteråt med verkliga siffror istället för antaganden
+- **Lämna inte kortet strömsatt utan uppsikt** under de första testerna, särskilt innan PG-skyddet är bekräftat fungera
+- Ha multimetern på VOUT **kontinuerligt** under DAC-svepningen, inte bara enstaka mätpunkter — ni vill se om något hoppar oväntat mellan koderna

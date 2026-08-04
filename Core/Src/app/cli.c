@@ -20,7 +20,21 @@ static uint16_t s_disp_pos;
 
 static void cli_send(const char *str)
 {
-    BSP_CLI_Send(str, strlen(str));
+    uint16_t len = (uint16_t)strlen(str);
+    /* CDC_Transmit_FS drops the data and returns USBD_BUSY instead of
+     * queuing/blocking if the previous USB packet is still in flight.
+     * status prints several lines back-to-back, so without this retry
+     * later lines get silently dropped or interleaved with the still-
+     * transmitting buffer, corrupting the output.
+     * Bounded by a timeout (not a bare spin) because CLI_Process() runs
+     * in the same main-loop iteration as TEC_Control_Tick() — an
+     * unbounded wait here (e.g. USB unplugged mid-transmit) would stall
+     * the PG-fault/laser-guard safety checks too. */
+    uint32_t start = HAL_GetTick();
+    while (BSP_CLI_Send((void *)str, len) == USBD_BUSY) {
+        if ((HAL_GetTick() - start) > 20u)
+            break;
+    }
 }
 
 static void cli_sendf(const char *fmt, ...)
@@ -134,6 +148,9 @@ static void process_line(char *line)
                   (double)ls->threshold_A,
                   (double)ls->max_current_A,
                   ls->enabled ? "ON" : "OFF");
+
+        cli_sendf("5V output: %s\r\n",
+                  HAL_GPIO_ReadPin(M6_EN_GPIO_Port, M6_EN_Pin) == GPIO_PIN_SET ? "ON" : "OFF");
         return;
     }
 

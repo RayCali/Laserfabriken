@@ -98,6 +98,26 @@ int main(void)
   MX_USART1_Init();
   MX_USB_Device_Init();
   /* USER CODE BEGIN 2 */
+  /* Enable the STM32's internal VREFBUF and drive it out on VREF+, which is
+   * wired on this board to the ADS1220's REFP0 (net "V2.9"). Without this,
+   * that net has no voltage on it at all -- confirmed on the bench: nothing
+   * in the .ioc or firmware ever turned VREFBUF on before now, so the
+   * ADS1220's external reference input was floating.
+   * HIZ must stay clear (0) -- HIZ=1 puts VREF+ in high-impedance (no
+   * output), which is the state used when an external reference source
+   * drives the pin instead; that's not the case here. */
+  VREFBUF->CSR &= ~VREFBUF_CSR_HIZ;
+  VREFBUF->CSR |= VREFBUF_CSR_ENVR;
+  {
+      /* Wait for the buffer to report ready (VRR), bounded so a fault here
+       * can't hang boot -- datasheet settle time is well under this. */
+      uint32_t vrefbuf_start = HAL_GetTick();
+      while (!(VREFBUF->CSR & VREFBUF_CSR_VRR)) {
+          if ((HAL_GetTick() - vrefbuf_start) > 10u)
+              break;
+      }
+  }
+
   TEC_Control_Init();
   Laser_Control_Init();
   Params_Load();
