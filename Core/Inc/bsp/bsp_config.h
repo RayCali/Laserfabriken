@@ -28,9 +28,11 @@
 
 /* ── Display UART ────────────────────────────────────────────────────────────
  * USART1 (PA9/PA10) — bidirectional bridge to ESP32 display.
+ * RX is interrupt-driven (see cli.c) -- no BSP_DISPLAY_Receive() macro;
+ * a 1-byte polling read silently drops bytes when the main loop is briefly
+ * elsewhere (confirmed on the bench), which the ISR-fed ring buffer avoids.
  */
 #define BSP_DISPLAY_Send(buf, len)   HAL_UART_Transmit(&huart1, (uint8_t*)(buf), (uint16_t)(len), 100)
-#define BSP_DISPLAY_Receive(pbyte)   HAL_UART_Receive(&huart1, (pbyte), 1, 0)
 
 /* ── Shared SPI bus ──────────────────────────────────────────────────────────
  * SPI3: PC10 (SCK), PC11 (MISO), PC12 (MOSI) — Mode 1 (CPOL=0, CPHA=1).

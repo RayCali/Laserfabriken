@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <stdbool.h>
 
 #define CLI_BUF_LEN  80
 
@@ -15,6 +16,67 @@ static uint16_t s_line_pos;
 
 static char     s_disp_buf[CLI_BUF_LEN];
 static uint16_t s_disp_pos;
+
+/* Diagnostic only: counts every byte that arrives on the display UART
+ * (valid or garbage) and remembers the last one, so 'status' can answer
+ * "is anything physically arriving at all?" independent of whether it
+ * parses as a command -- splits a wiring/connector fault from a firmware
+ * parsing fault instead of guessing. */
+static uint32_t s_disp_rx_count;
+static uint8_t  s_disp_rx_last;
+
+/* ── Interrupt-driven display UART RX ────────────────────────────────────
+ * USART1's RX buffer is only 1 byte deep (FIFO disabled, usart.c). Polling
+ * it from CLI_Process() (HAL_UART_Receive, Timeout=0) silently drops any
+ * byte that arrives while the main loop is briefly elsewhere -- confirmed
+ * on the bench: multi-line bursts from the display consistently lost
+ * bytes right at the seam between lines, matching gaps caused by
+ * TEC_Control_Tick()'s SPI transactions. HAL_UART_RxCpltCallback() grabs
+ * each byte into this ring buffer the instant it arrives via interrupt,
+ * independent of what the main loop is doing, which removes that window
+ * structurally instead of just narrowing it. Requires USART1's NVIC
+ * interrupt enabled in CubeMX (Pinout & Configuration -> USART1 -> NVIC
+ * Settings -> USART1 global interrupt). */
+#define DISP_RX_RING_SIZE 64
+static volatile uint8_t  s_disp_rx_ring[DISP_RX_RING_SIZE];
+static volatile uint16_t s_disp_rx_head;
+static volatile uint16_t s_disp_rx_tail;
+static uint8_t            s_disp_rx_isr_byte;
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART1) {
+        uint16_t next = (uint16_t)((s_disp_rx_head + 1u) % DISP_RX_RING_SIZE);
+        if (next != s_disp_rx_tail) {
+            s_disp_rx_ring[s_disp_rx_head] = s_disp_rx_isr_byte;
+            s_disp_rx_head = next;
+        } /* ring full (CLI_Process() not keeping up at all) -- drop rather
+             than overwrite unread data */
+        HAL_UART_Receive_IT(&huart1, &s_disp_rx_isr_byte, 1);
+    }
+}
+
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART1) {
+        __HAL_UART_CLEAR_OREFLAG(&huart1);
+        __HAL_UART_CLEAR_NEFLAG(&huart1);
+        __HAL_UART_CLEAR_FEFLAG(&huart1);
+        __HAL_UART_CLEAR_PEFLAG(&huart1);
+        /* HAL aborts the pending receive on error -- re-arm it or RX stops
+         * permanently, same failure mode the old polling code hit. */
+        HAL_UART_Receive_IT(&huart1, &s_disp_rx_isr_byte, 1);
+    }
+}
+
+static bool disp_rx_pop(uint8_t *out)
+{
+    if (s_disp_rx_head == s_disp_rx_tail)
+        return false;
+    *out = s_disp_rx_ring[s_disp_rx_tail];
+    s_disp_rx_tail = (uint16_t)((s_disp_rx_tail + 1u) % DISP_RX_RING_SIZE);
+    return true;
+}
 
 /* ── Output helpers ──────────────────────────────────────────────────────── */
 
@@ -156,6 +218,9 @@ static void process_line(char *line)
 
         cli_sendf("5V output: %s\r\n",
                   HAL_GPIO_ReadPin(M6_EN_GPIO_Port, M6_EN_Pin) == GPIO_PIN_SET ? "ON" : "OFF");
+
+        cli_sendf("Display UART: %lu bytes received, last=0x%02X\r\n",
+                  (unsigned long)s_disp_rx_count, s_disp_rx_last);
         return;
     }
 
@@ -375,13 +440,64 @@ static void process_line(char *line)
         return;
     }
 
-    cli_send("ERR: unknown command (type 'help')\r\n");
+    cli_sendf("ERR: unknown command: '%s' (type 'help')\r\n", line);
+}
+
+/* ── Display state sync ──────────────────────────────────────────────────── */
+
+/* Push the "relevant" parameters (laser power, crystal wavelength, laser
+ * on/off, 5V on/off) to the display whenever any of them actually change,
+ * using the same command syntax the display sends us -- one parser on the
+ * display side handles both directions identically.
+ *
+ * Diffed once per main loop iteration rather than pushed at each individual
+ * 'set'/'laser on'/'5v on'/etc. call site: these can also change on their
+ * own (e.g. the laser temp guard auto-disabling the laser on a trip -- see
+ * g_laser_temp_trip_pending), and a diff check here catches that the same
+ * way it catches an explicit CLI command, without needing a push call
+ * threaded through every possible mutation site, present or future.
+ *
+ * Sentinel "impossible" initial values force a first sync on boot, once
+ * Params_Load() has restored the real values -- see main.c USER CODE 2. */
+static uint16_t s_sync_power_pct  = 0xFFFFu;
+static float    s_sync_wavelength = -1.0f;
+static uint8_t  s_sync_laser_on   = 0xFFu;
+static uint8_t  s_sync_5v_on      = 0xFFu;
+
+static void cli_sync_display(void)
+{
+    const LaserState_t *ls = Laser_Control_GetState();
+    float wavelength = g_crystal_wl_k * g_crystal_pid.setpoint + g_crystal_wl_m;
+    uint8_t v5_on = (HAL_GPIO_ReadPin(M6_EN_GPIO_Port, M6_EN_Pin) == GPIO_PIN_SET) ? 1u : 0u;
+    char buf[40];
+
+    if (ls->power_pct != s_sync_power_pct) {
+        s_sync_power_pct = ls->power_pct;
+        snprintf(buf, sizeof(buf), "set laser.power %u\r\n", (unsigned)ls->power_pct);
+        BSP_DISPLAY_Send(buf, strlen(buf));
+    }
+    if (wavelength != s_sync_wavelength) {
+        s_sync_wavelength = wavelength;
+        snprintf(buf, sizeof(buf), "set crystal.wavelength %.2f\r\n", (double)wavelength);
+        BSP_DISPLAY_Send(buf, strlen(buf));
+    }
+    if (ls->enabled != s_sync_laser_on) {
+        s_sync_laser_on = ls->enabled;
+        BSP_DISPLAY_Send(ls->enabled ? "laser on\r\n" : "laser off\r\n",
+                          ls->enabled ? 10 : 11);
+    }
+    if (v5_on != s_sync_5v_on) {
+        s_sync_5v_on = v5_on;
+        BSP_DISPLAY_Send(v5_on ? "5v on\r\n" : "5v off\r\n",
+                          v5_on ? 7 : 8);
+    }
 }
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
 
 void CLI_Init(void)
 {
+    HAL_UART_Receive_IT(&huart1, &s_disp_rx_isr_byte, 1);
     cli_send("\r\n=== Laserfabriken ===\r\n");
     cli_send("Type 'help' for commands\r\n> ");
 }
@@ -428,8 +544,13 @@ void CLI_Process(void)
         }
     }
 
-    /* Drain display UART — process received commands without forwarding back */
-    while (BSP_DISPLAY_Receive(&byte) == 0) {
+    /* Drain display UART — process received commands without forwarding back.
+     * Bytes are captured by HAL_UART_RxCpltCallback() into a ring buffer the
+     * instant they arrive (interrupt-driven, see top of file) -- this just
+     * consumes what's already been captured, no direct UART access here. */
+    while (disp_rx_pop(&byte)) {
+        s_disp_rx_count++;
+        s_disp_rx_last = byte;
         if (byte == '\r' || byte == '\n') {
             if (s_disp_pos > 0) {
                 s_disp_buf[s_disp_pos] = '\0';
@@ -442,4 +563,6 @@ void CLI_Process(void)
             s_disp_buf[s_disp_pos++] = (char)byte;
         }
     }
+
+    cli_sync_display();
 }
