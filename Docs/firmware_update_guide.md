@@ -1,6 +1,6 @@
 # Firmware Update Guide
 
-This guide explains how to update the firmware on your Laserfabriken device from Windows. You only need to do the driver setup in Step 1 **once, ever** — after that, updating firmware is a single command (or drag-and-drop) each time.
+This guide explains how to update the firmware on your Laserfabriken device from Windows, using only free/open-source tools (`dfu-util`, Zadig/WinUSB) — **no ST proprietary software (e.g. STM32CubeProgrammer) required**, and none of it needs installing beyond the one-time driver setup below. You only need to do the driver setup in Step 1 **once, ever** — after that, updating firmware is a single command (or drag-and-drop) each time.
 
 > **Note for whoever finishes this doc:** Step 2a below (putting the board into DFU/firmware-update mode) is marked TODO — the physical procedure for the production G431 UGN board (button? jumper? something else?) isn't documented anywhere in this repo yet. Fill it in before sending this to an actual customer. See the note in that section.
 
@@ -56,4 +56,69 @@ That's it — your device is now running the new firmware.
 
 ## For developers / internal testing only
 
-`firmware-updater.exe` also supports `--target=stlink`, for flashing over an ST-Link debug probe (e.g. a Nucleo development board) instead of the production DFU path — not relevant for customers, only for testing this tool during development. See `Tools/firmware-updater/FIRMWARE_UPDATER.md` for details.
+`firmware-updater.exe` also supports `--target=stlink`, for flashing over an ST-Link debug probe instead of the production DFU path — not relevant for customers, only for testing this tool during development.
+
+### A. Just running the tool (no code changes)
+
+`dist/firmware-updater.exe` and `dist/dfu-util.exe` are git-tracked, pre-built binaries — pull the repo and use them directly, no compiler needed. You still need the one-time Zadig setup (Step 1 above) against whatever device you're flashing.
+
+### B. Changing `main.c` and rebuilding
+
+1. Install MSYS2 (https://www.msys2.org/, default path `C:\msys64` — `build.ps1` hardcodes this).
+2. Open **"MSYS2 MINGW64"** from the Start menu (not the plain "MSYS2" shortcut — different environment) and run:
+   ```
+   pacman -S mingw-w64-x86_64-gcc
+   ```
+3. Build, from a normal PowerShell (not the MSYS2 shell) in this directory:
+   ```powershell
+   .\build.ps1
+   ```
+   Compiles `main.c` and downloads `dfu-util.exe` into `.\build\` (gitignored — your scratch area, not what ships).
+4. Test without hardware — any `.bin` path works, even a fake/empty one:
+   ```powershell
+   .\build\firmware-updater.exe --target=stlink C:\path\to\some.bin
+   ```
+   With nothing plugged in, it should still run cleanly and report a "device not found"-style error from `dfu-util`/`st-flash`.
+5. When ready to ship the change, publish to `dist\` (which *is* git-tracked) and commit:
+   ```powershell
+   .\build.ps1 -Publish
+   git add Tools/firmware-updater/dist
+   git commit
+   ```
+   Don't skip this — `dist\` is what a non-developer actually pulls and runs (option A above). Forgetting to publish means the change never ships, even though it built fine locally.
+
+### C. Testing against real hardware
+
+Both `dfu-util` and `st-flash` talk to their device through `libusb`, which needs Windows' WinUSB driver bound first — the same one-time Zadig step as Step 1 above, but done **per USB device**. `--target=dfu` and `--target=stlink` are two different devices (different VID:PID) — doing Zadig for one does not cover the other.
+
+**`--target=stlink` — confirmed working on real hardware, including the actual G431 UGN card:**
+
+A standalone external ST-Link probe connects to the UGN board's own SWD pads and presents itself to Windows with the standard ST-Link VID:PID. The UGN schematic (`laserfabriken-ugn.kicad_sch`, sheet 1) shows a dedicated 4-pad programming header, **`ProgPAD` (P1)**, broken out directly from the STM32's SWD pins: `SWDIO`, `SWDCLK`, `3V3`, `GND`. That's what the probe connects to on a real card — no DFU, no USB bootloader mode, no BOOT0/J5 involved at all for this path.
+
+1. Set up `st-flash.exe` itself, separately from Zadig — it needs `libstlink.dll` and `libusb-1.0.dll` sitting next to it, plus its chip database installed at a hardcoded path. Full step-by-step: `Tools/firmware-updater/FIRMWARE_UPDATER.md` §5. One-time, per dev machine — not something that ships to customers (see below for why it isn't in git).
+2. Connect the external ST-Link probe's SWDIO/SWDCLK/3V3/GND leads to the UGN card's `ProgPAD` header.
+3. Run Zadig against the probe's ST-Link interface specifically — `USB\VID_0483&PID_374B&MI_00`. **Not** the mass-storage or VCP entries under the same VID:PID (`MI_01`/`MI_02`) — wrong interface, won't work.
+4. Flash:
+   ```powershell
+   .\build\firmware-updater.exe --target=stlink C:\path\to\some.bin
+   ```
+
+This is also what STM32CubeProgrammer's GUI does under the hood when connected via ST-Link/SWD — see the main `README.md`'s build/flash section.
+
+**`--target=dfu` (USB, no probe needed):** the customer-facing path — same device and steps as Step 1 above (`VID_0483&PID_DF11`). Separate from the ST-Link/SWD path above; a customer has no ST-Link probe and isn't expected to open the case, so DFU-over-USB remains the plan for them regardless of what's used for development. The BOOT0/J5 DFU-mode-entry procedure (Step 1, "Put your device into firmware-update mode") is still unconfirmed against a real card — SWD flashing during development doesn't exercise or resolve that question, since it doesn't go through BOOT0 at all.
+
+### Verifying this yourself instead of trusting this doc
+
+This doc (and `FIRMWARE_UPDATER.md`) can go stale relative to the actual repo — check directly rather than assuming either is still accurate:
+
+```bash
+# What's actually committed to git under Tools/firmware-updater/
+git ls-files Tools/firmware-updater/
+
+# What's explicitly excluded, and why (read the comment above the entries)
+cat .gitignore
+```
+
+As of this writing: `dist/firmware-updater.exe` and `dist/dfu-util.exe` are tracked — that's option A above, no setup needed after cloning. `dist/st-flash.exe`, `libstlink.dll`, and `libusb-1.0.dll` are deliberately **not** tracked — a fresh clone will not have them, and testing `--target=stlink` needs them set up locally from scratch, following §5 in `FIRMWARE_UPDATER.md`.
+
+See `Tools/firmware-updater/FIRMWARE_UPDATER.md` for the full history and reasoning behind all of this (§8 is the original, more detailed version of this section).
