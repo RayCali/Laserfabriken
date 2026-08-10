@@ -5,6 +5,9 @@
 #include "pid.h"
 #include "bsp_tec.h"
 
+/* Control loop period — must match the calling interval in main.c */
+#define PID_PERIOD_S  0.1f
+
 /* Exposed so CLI can read/write Kp, Ki, Kd, setpoint directly. */
 extern PID_t g_crystal_pid;
 extern PID_t g_laser_pid;

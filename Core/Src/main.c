@@ -138,7 +138,7 @@ int main(void)
   while (1)
   {
     uint32_t now = HAL_GetTick();
-    if (now - last_tick >= 100) {
+    if (now - last_tick >= PID_PERIOD_S * 1000) {
       last_tick = now;
       TEC_Control_Tick();
     }

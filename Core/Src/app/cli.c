@@ -253,6 +253,7 @@ static void process_line(char *line)
         g_tec_manual_test = 1;
         BSP_TEC_SetRawDAC(4095u);
         BSP_TEC_SetRawPolarity(false);
+        BSP_TEC_Enable(TEC_CRYSTAL, 1);
         cli_send("OK manual DAC test mode ON — crystal TEC PID paused, raw DAC forced to 4095"
                  " (safe/inert), polarity forced to cool. Use 'dac set <code>' to sweep DOWN"
                  " from there, checking FB and PG after every step. Do not jump toward 0."
@@ -260,6 +261,8 @@ static void process_line(char *line)
         return;
     }
     if (strcmp(line, "dac test off") == 0) {
+        Laser_Control_Disable(); // TODO: Disable TEC 
+        BSP_TEC_Enable(TEC_CRYSTAL, 0);
         BSP_TEC_SetRawDAC(4095u);
         BSP_TEC_SetRawPolarity(false);
         g_tec_manual_test = 0;
@@ -507,10 +510,14 @@ void CLI_Process(void)
     uint8_t byte;
 
     /* Print TEC power-good fault notification as soon as it is set by the control loop */
-    if (g_tec_pg_fault_pending) {
+    if (g_tec_pg_fault_pending == 1) {
+        g_tec_pg_fault_pending = 2; /* 2 = printed, waiting for clear */
+        cli_send("\r\nTEC buck power-good fault (PG low) !!\r\n> ");
+    } else if (g_tec_pg_fault_pending == 3) {
         g_tec_pg_fault_pending = 0;
-        cli_send("\r\n!! TEC DISABLED — buck power-good fault (PG low) !!\r\n> ");
+        cli_send("\r\nTEC buck power-good OK\r\n> ");
     }
+
 
     /* Print trip notification as soon as it is set by the control loop */
     if (g_laser_temp_trip_pending) {

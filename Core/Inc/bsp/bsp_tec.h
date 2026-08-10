@@ -9,8 +9,19 @@ typedef enum {
     TEC_LASER   = 1,
 } TecChannel_t;
 
+typedef enum {
+    POLARITY_COOL = 0,
+    POLARITY_HEAT = 1,
+    POLARITY_INIT = 2,
+    POLARITY_RUN = 3,
+} PolarityState_t;
+
+
 /* Enable the TEC buck converter and zero the output. Call once per channel at startup. */
 void BSP_TEC_Init(TecChannel_t ch);
+
+/* Set buck converter enable state*/
+void BSP_TEC_Enable(TecChannel_t ch, uint8_t enable);
 
 /* Set TEC drive level.
  * value ∈ [-1.0, +1.0]: sign selects direction via the POLARITY GPIO,

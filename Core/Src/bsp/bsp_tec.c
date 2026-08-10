@@ -40,32 +40,69 @@ void BSP_TEC_Init(TecChannel_t ch)
         return;
 
     /* Start with zero drive and forward polarity */
-    HAL_GPIO_WritePin(BSP_TEC_POLARITY_PORT, BSP_TEC_POLARITY_PIN, GPIO_PIN_RESET);
-    internal_dac_set(TEC_CRYSTAL, 0);
+    BSP_TEC_SetRawPolarity(false);
+    BSP_TEC_SetRawDAC(4095u);
 
-    /* Enable buck converter */
-    HAL_GPIO_WritePin(BSP_TEC_EN_PORT, BSP_TEC_EN_PIN, GPIO_PIN_SET);
+    /* Disable buck converter */
+    BSP_TEC_Enable(TEC_CRYSTAL, 0);
+}
+
+void BSP_TEC_Enable(TecChannel_t ch, uint8_t enable)
+{
+    if (ch == TEC_CRYSTAL) {
+        /* Enable CRYSTAL buck converter */
+        if (enable) {
+            HAL_GPIO_WritePin(BSP_TEC_EN_PORT, BSP_TEC_EN_PIN, GPIO_PIN_SET);
+        } else {
+            HAL_GPIO_WritePin(BSP_TEC_EN_PORT, BSP_TEC_EN_PIN, GPIO_PIN_RESET);
+        }
+    }
 }
 
 void BSP_TEC_SetOutput(TecChannel_t ch, float value)
+// Executed 10 times per second
 {
     if (ch != TEC_CRYSTAL)
         return;
 
-    if (value >  1.0f) value =  1.0f;
-    if (value < -1.0f) value = -1.0f;
+    static uint8_t polarity_state_ch[2] = { POLARITY_INIT, POLARITY_INIT };
+    uint8_t polarity_state = polarity_state_ch[ch];
+    uint16_t dac_code;
 
-    /* Set direction via POLARITY pin */
-    if (value >= 0.0f) {
-        HAL_GPIO_WritePin(BSP_TEC_POLARITY_PORT, BSP_TEC_POLARITY_PIN, GPIO_PIN_SET);
-    } else {
-        HAL_GPIO_WritePin(BSP_TEC_POLARITY_PORT, BSP_TEC_POLARITY_PIN, GPIO_PIN_RESET);
-        value = -value;
+    // Set polarity after initialization
+    if (polarity_state == POLARITY_RUN) {
+        /* Enable buck converter */
+        BSP_TEC_Enable(ch, 1);
+        if (value >= 0.0f) {
+            polarity_state = POLARITY_HEAT;
+            BSP_TEC_SetRawPolarity(true);
+        } else {
+            polarity_state = POLARITY_COOL;
+            BSP_TEC_SetRawPolarity(false);
+        }
+    } else if (((value >= 0.0f) && (polarity_state == POLARITY_COOL)) ||
+        ((value < 0.0f) && (polarity_state == POLARITY_HEAT))) {
+        // Check if the polarity has changed and reset to INIT if it has    
+
+        polarity_state = POLARITY_INIT;
     }
 
-    /* Map magnitude [0.0, 1.0] → DAC code [0, 4095] */
-    uint16_t dac_code = (uint16_t)(value * 4095.0f);
-    internal_dac_set(TEC_CRYSTAL, dac_code);
+    // Set DAC output depending on state
+    if (polarity_state == POLARITY_INIT) {
+        BSP_TEC_SetRawDAC(4095u);
+
+        /* Disable buck converter */
+        BSP_TEC_Enable(ch, 0);
+        polarity_state = POLARITY_RUN;
+    } else {
+        if (value < 0.0f) {
+            value = -value; // Make value positive for DAC calculation
+        }
+        if (value > 1.0f) value = 1.0f;
+        dac_code = 4095u - (uint16_t)(value * 4095.0f);
+        BSP_TEC_SetRawDAC(dac_code);
+    }
+    polarity_state_ch[ch] = polarity_state;
 }
 
 void BSP_TEC_Disable(TecChannel_t ch)

@@ -33,9 +33,6 @@ static float s_laser_temp     = 0.0f;
 static float s_crystal_output = 0.0f;
 static float s_laser_output   = 0.0f;
 
-/* Control loop period — must match the calling interval in main.c */
-#define PID_PERIOD_S  0.1f
-
 /* D-term EMA coefficient: 0.1 gives ~10 sample smoothing, good starting point.
  * Increase toward 1.0 for faster D response (more noise); decrease for less. */
 #define D_ALPHA       0.1f
@@ -48,8 +45,8 @@ void TEC_Control_Init(void)
 
     /* Default PID parameters — these are conservative starting values.
      * Tune Kp/Ki/Kd via serial terminal once real hardware is connected. */
-    PID_Init(&g_crystal_pid, 0.5f, 0.02f, 0.1f, 25.0f, -1.0f, 1.0f, D_ALPHA);
-    PID_Init(&g_laser_pid,   0.5f, 0.02f, 0.1f, 25.0f, -1.0f, 1.0f, D_ALPHA);
+    PID_Init(&g_crystal_pid, 0.1f, 0.0f, 0.0f, 30.0f, 0.0f, 1.0f, D_ALPHA);
+    PID_Init(&g_laser_pid,   0.1f, 0.0f, 0.0f, 30.0f, 0.0f, 1.0f, D_ALPHA);
 }
 
 void TEC_Control_Tick(void)
@@ -66,19 +63,28 @@ void TEC_Control_Tick(void)
      * the CLI owns the crystal DAC output in that mode, and either branch
      * here (BSP_TEC_Disable or BSP_TEC_SetOutput) would stomp on whatever
      * raw code the sweep just set, on the very next 100 ms tick. */
-    if (!g_tec_manual_test) {
-        if (!BSP_TEC_PowerGood()) {
-            if (!g_tec_pg_fault)
+
+    g_tec_pg_fault = !BSP_TEC_PowerGood(); /* status display only, no action taken */
+     if (!g_tec_manual_test &&
+         Laser_Control_GetState()->enabled) { // TODO: Have enable flag also for TEC
+        BSP_TEC_SetOutput(TEC_CRYSTAL, s_crystal_output);
+
+        if (g_tec_pg_fault) {
+            if (g_tec_pg_fault_pending == 0) {
                 g_tec_pg_fault_pending = 1;
-            g_tec_pg_fault = 1;
-            BSP_TEC_Disable(TEC_CRYSTAL);
+            }
         } else {
-            g_tec_pg_fault = 0;
-            BSP_TEC_SetOutput(TEC_CRYSTAL, s_crystal_output);
+            if (g_tec_pg_fault_pending == 2) {
+                g_tec_pg_fault_pending = 3;
+            } else if (g_tec_pg_fault_pending != 3) {
+                g_tec_pg_fault_pending = 0;
+            }
         }
+ 
     } else {
         g_tec_pg_fault = !BSP_TEC_PowerGood(); /* status display only, no action taken */
     }
+    
     BSP_TEC_SetOutput(TEC_LASER, s_laser_output);
 
     /* Laser temperature protection — only runs when laser is enabled */
