@@ -45,8 +45,8 @@ void TEC_Control_Init(void)
 
     /* Default PID parameters — these are conservative starting values.
      * Tune Kp/Ki/Kd via serial terminal once real hardware is connected. */
-    PID_Init(&g_crystal_pid, 0.1f, 0.0f, 0.0f, 30.0f, 0.0f, 1.0f, D_ALPHA);
-    PID_Init(&g_laser_pid,   0.1f, 0.0f, 0.0f, 30.0f, 0.0f, 1.0f, D_ALPHA);
+    PID_Init(&g_crystal_pid, 0.1f, 0.0f, 0.0f, 30.0f, -1.0f, 1.0f, D_ALPHA);
+    PID_Init(&g_laser_pid,   0.1f, 0.0f, 0.0f, 30.0f, -1.0f, 1.0f, D_ALPHA);
 }
 
 void TEC_Control_Tick(void)
@@ -65,10 +65,10 @@ void TEC_Control_Tick(void)
      * raw code the sweep just set, on the very next 100 ms tick. */
 
     g_tec_pg_fault = !BSP_TEC_PowerGood(); /* status display only, no action taken */
-     if (!g_tec_manual_test &&
-         Laser_Control_GetState()->enabled) { // TODO: Have enable flag also for TEC
+     if (!g_tec_manual_test && g_crystal_pid.enabled) {
         BSP_TEC_SetOutput(TEC_CRYSTAL, s_crystal_output);
 
+        // Print fault state on CLI if changed
         if (g_tec_pg_fault) {
             if (g_tec_pg_fault_pending == 0) {
                 g_tec_pg_fault_pending = 1;
@@ -82,9 +82,10 @@ void TEC_Control_Tick(void)
         }
  
     } else {
-        g_tec_pg_fault = !BSP_TEC_PowerGood(); /* status display only, no action taken */
+        PID_Reset(&g_crystal_pid);
+        BSP_TEC_Reset(TEC_CRYSTAL);
     }
-    
+
     BSP_TEC_SetOutput(TEC_LASER, s_laser_output);
 
     /* Laser temperature protection — only runs when laser is enabled */

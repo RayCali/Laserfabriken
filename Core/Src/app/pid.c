@@ -13,6 +13,7 @@ void PID_Init(PID_t *pid,
     pid->output_min = out_min;
     pid->output_max = out_max;
     pid->d_alpha    = d_alpha;
+    pid->enabled    = 0;
     PID_Reset(pid);
 }
 

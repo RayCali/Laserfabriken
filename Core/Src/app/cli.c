@@ -154,6 +154,8 @@ static void process_line(char *line)
                  "  laser off\r\n"
                  "  5v on\r\n"
                  "  5v off\r\n"
+                 "  crystal.tec on\r\n"
+                 "  crystal.tec off\r\n"
                  "  dac test on           — pause crystal TEC PID, force raw DAC=4095 (safe)\r\n"
                  "  dac set   <code>      — 0-4095, raw DAC write (requires 'dac test on')\r\n"
                  "  polarity heat         — POLARITY pin HIGH (requires 'dac test on')\r\n"
@@ -171,22 +173,24 @@ static void process_line(char *line)
 
         TEC_Control_GetState(TEC_CRYSTAL, &temp, &output);
         float wl = g_crystal_wl_k * g_crystal_pid.setpoint + g_crystal_wl_m;
-        cli_sendf("Crystal TEC: T=%7.4f C  SP=%7.4f C  WL=%7.2f nm  k=%.4f nm/C  m=%.2f nm  out=%+6.4f"
-                  "  Kp=%.4f  Ki=%.6f  Kd=%.4f\r\n",
+        cli_sendf("Crystal TEC: T=%7.4f C  SP=%7.4f C  WL=%7.2f nm  k=%.4f nm/C ",
                   (double)temp,
                   (double)g_crystal_pid.setpoint,
                   (double)wl,
-                  (double)g_crystal_wl_k,
+                  (double)g_crystal_wl_k);
+
+        cli_sendf("m=%.2f nm  out=%.4f  Kp=%.4f  Ki=%.6f  Kd=%.4f\r\n",
                   (double)g_crystal_wl_m,
                   (double)output,
                   (double)g_crystal_pid.Kp,
                   (double)g_crystal_pid.Ki,
                   (double)g_crystal_pid.Kd);
+
         if (g_tec_pg_fault)
             cli_send("  TEC buck: FAULT — power-good low, output disabled\r\n");
 
         TEC_Control_GetState(TEC_LASER, &temp, &output);
-        cli_sendf("Laser  TEC: T=%7.4f C  SP=%7.4f  out=%+6.4f"
+        cli_sendf("Laser  TEC: T=%7.4f C  SP=%7.4f  out=%.4f"
                   "  Kp=%.4f  Ki=%.6f  Kd=%.4f\r\n",
                   (double)temp,
                   (double)g_laser_pid.setpoint,
@@ -216,8 +220,10 @@ static void process_line(char *line)
                   (double)ls->max_current_A,
                   ls->enabled ? "ON" : "OFF");
 
-        cli_sendf("5V output: %s\r\n",
-                  HAL_GPIO_ReadPin(M6_EN_GPIO_Port, M6_EN_Pin) == GPIO_PIN_SET ? "ON" : "OFF");
+        // cli_sendf("5V output: %s\r\n",
+        //     HAL_GPIO_ReadPin(M6_EN_GPIO_Port, M6_EN_Pin) == GPIO_PIN_SET ? "ON" : "OFF");
+        cli_sendf("TEC output: %s\r\n",
+                  HAL_GPIO_ReadPin(BSP_TEC_EN_PORT, BSP_TEC_EN_PIN) == GPIO_PIN_SET ? "ON" : "OFF");
 
         cli_sendf("Display UART: %lu bytes received, last=0x%02X\r\n",
                   (unsigned long)s_disp_rx_count, s_disp_rx_last);
@@ -228,6 +234,24 @@ static void process_line(char *line)
     if (strcmp(line, "laser on") == 0) {
         Laser_Control_Enable();
         cli_send("OK laser enabled\r\n");
+        return;
+    }
+    if (strcmp(line, "laser off") == 0) {
+        Laser_Control_Disable();
+        cli_send("OK laser disabled\r\n");
+        return;
+    }
+
+    /* crystal.tec on / crystal.tec off */
+    if (strcmp(line, "crystal.tec on") == 0) {
+        g_crystal_pid.enabled = 1;
+        cli_send("OK crystal TEC enabled\r\n");
+        return;
+    }
+    if (strcmp(line, "crystal.tec off") == 0) {
+        
+        g_crystal_pid.enabled = 0;
+        cli_send("OK crystal TEC disabled\r\n");
         return;
     }
     if (strcmp(line, "laser off") == 0) {
@@ -466,11 +490,15 @@ static uint16_t s_sync_power_pct  = 0xFFFFu;
 static float    s_sync_wavelength = -1.0f;
 static uint8_t  s_sync_laser_on   = 0xFFu;
 static uint8_t  s_sync_5v_on      = 0xFFu;
+static uint8_t  s_sync_crystal_tec_on = 0xFFu;
+static float    s_sync_crystal_temp = -1000.0f;
+static float    s_sync_crystal_output = -1000.0f;
 
 static void cli_sync_display(void)
 {
     const LaserState_t *ls = Laser_Control_GetState();
     float wavelength = g_crystal_wl_k * g_crystal_pid.setpoint + g_crystal_wl_m;
+    float temp, output;
     uint8_t v5_on = (HAL_GPIO_ReadPin(M6_EN_GPIO_Port, M6_EN_Pin) == GPIO_PIN_SET) ? 1u : 0u;
     char buf[40];
 
@@ -493,6 +521,26 @@ static void cli_sync_display(void)
         s_sync_5v_on = v5_on;
         BSP_DISPLAY_Send(v5_on ? "5v on\r\n" : "5v off\r\n",
                           v5_on ? 7 : 8);
+    }
+
+    uint8_t crystal_tec_on = (HAL_GPIO_ReadPin(BSP_TEC_EN_PORT, BSP_TEC_EN_PIN) == GPIO_PIN_SET) ? 1u : 0u;
+    if (crystal_tec_on != s_sync_crystal_tec_on) {
+        s_sync_crystal_tec_on = crystal_tec_on;
+        BSP_DISPLAY_Send(crystal_tec_on ? "crystal.tec on\r\n" : "crystal.tec off\r\n",
+                          crystal_tec_on ? 16 : 17);
+    }
+
+    TEC_Control_GetState(TEC_CRYSTAL, &temp, &output);
+    if (temp != s_sync_crystal_temp) {
+        s_sync_crystal_temp = temp;
+        snprintf(buf, sizeof(buf), "crystal.temp %.4f\r\n", (double)temp);
+        BSP_DISPLAY_Send(buf, strlen(buf));
+    }
+
+    if (output != s_sync_crystal_output) {
+        s_sync_crystal_output = output;
+        snprintf(buf, sizeof(buf), "crystal.output %.4f\r\n", (double)output);
+        BSP_DISPLAY_Send(buf, strlen(buf));
     }
 }
 

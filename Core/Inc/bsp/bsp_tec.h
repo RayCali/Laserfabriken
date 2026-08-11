@@ -20,6 +20,9 @@ typedef enum {
 /* Enable the TEC buck converter and zero the output. Call once per channel at startup. */
 void BSP_TEC_Init(TecChannel_t ch);
 
+/* Reset the TEC polarity state. */
+void BSP_TEC_Reset(TecChannel_t ch);
+
 /* Set buck converter enable state*/
 void BSP_TEC_Enable(TecChannel_t ch, uint8_t enable);
 

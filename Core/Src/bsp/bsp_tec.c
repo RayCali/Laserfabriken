@@ -30,6 +30,11 @@ static void internal_dac_set(TecChannel_t ch, uint16_t code_12bit)
     HAL_DAC_Start(BSP_DAC, dac_ch);
 }
 
+
+/* ── Static variables ────────────────────────────────────────────────────────── */
+
+static uint8_t polarity_state_ch[2] = { POLARITY_INIT, POLARITY_INIT };
+
 /* ── Public API ──────────────────────────────────────────────────────────────── */
 
 void BSP_TEC_Init(TecChannel_t ch)
@@ -39,12 +44,13 @@ void BSP_TEC_Init(TecChannel_t ch)
     if (ch != TEC_CRYSTAL)
         return;
 
+    /* Disable buck converter */
+    BSP_TEC_Enable(TEC_CRYSTAL, 0);
+
     /* Start with zero drive and forward polarity */
     BSP_TEC_SetRawPolarity(false);
     BSP_TEC_SetRawDAC(4095u);
 
-    /* Disable buck converter */
-    BSP_TEC_Enable(TEC_CRYSTAL, 0);
 }
 
 void BSP_TEC_Enable(TecChannel_t ch, uint8_t enable)
@@ -59,13 +65,18 @@ void BSP_TEC_Enable(TecChannel_t ch, uint8_t enable)
     }
 }
 
+void BSP_TEC_Reset(TecChannel_t ch)
+{
+    polarity_state_ch[ch] = POLARITY_INIT;
+}
+
+
 void BSP_TEC_SetOutput(TecChannel_t ch, float value)
 // Executed 10 times per second
 {
     if (ch != TEC_CRYSTAL)
         return;
 
-    static uint8_t polarity_state_ch[2] = { POLARITY_INIT, POLARITY_INIT };
     uint8_t polarity_state = polarity_state_ch[ch];
     uint16_t dac_code;
 

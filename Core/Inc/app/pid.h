@@ -1,6 +1,8 @@
 #ifndef PID_H
 #define PID_H
 
+#include <stdint.h>
+
 typedef struct {
     float  Kp;
     float  Ki;
@@ -16,6 +18,7 @@ typedef struct {
     double integral;
     float  prev_error;
     float  d_filtered;
+    uint8_t enabled;
 } PID_t;
 
 void  PID_Init(PID_t *pid,
