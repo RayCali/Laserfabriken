@@ -232,13 +232,21 @@ static void process_line(char *line)
 
     /* laser on / laser off */
     if (strcmp(line, "laser on") == 0) {
+ 
+        // FJ temporary fix
         Laser_Control_Enable();
-        cli_send("OK laser enabled\r\n");
+        // cli_send("OK laser enabled\r\n
+        BSP_TEC_Enable(TEC_CRYSTAL, 1);
+        BSP_TEC_Reset(TEC_CRYSTAL);
+        cli_send("OK crystal TEC enabled\r\n");
         return;
     }
     if (strcmp(line, "laser off") == 0) {
+        // FJ temporary fix
         Laser_Control_Disable();
-        cli_send("OK laser disabled\r\n");
+        // cli_send("OK laser disabled\r\n");
+        BSP_TEC_Enable(TEC_CRYSTAL, 0);
+        cli_send("OK crystal TEC disabled\r\n");
         return;
     }
 
@@ -337,7 +345,11 @@ static void process_line(char *line)
 
         /* Crystal wavelength model (checked before TEC PID to avoid param_name collision) */
         if (strcmp(param, "crystal.wavelength") == 0) {
+            // FJ: Temporary fix
             TEC_Crystal_SetWavelength(val);
+            g_crystal_pid.setpoint = val;
+            PID_Reset(&g_crystal_pid);
+
             cli_sendf("OK crystal.wavelength = %.2f nm  -> SP=%.4f C\r\n",
                       (double)val, (double)g_crystal_pid.setpoint);
             Params_MarkDirty();
@@ -483,7 +495,8 @@ static float    s_sync_crystal_output = -1000.0f;
 static void cli_sync_display(void)
 {
     const LaserState_t *ls = Laser_Control_GetState();
-    float wavelength = g_crystal_wl_k * g_crystal_pid.setpoint + g_crystal_wl_m;
+    // float wavelength = g_crystal_wl_k * g_crystal_pid.setpoint + g_crystal_wl_m;
+    float wavelength = g_crystal_pid.setpoint; // FJ temp fix
     float temp, output;
     uint8_t v5_on = (HAL_GPIO_ReadPin(M6_EN_GPIO_Port, M6_EN_Pin) == GPIO_PIN_SET) ? 1u : 0u;
     char buf[40];
