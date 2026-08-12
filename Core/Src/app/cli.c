@@ -156,11 +156,11 @@ static void process_line(char *line)
                  "  5v off\r\n"
                  "  crystal.tec on\r\n"
                  "  crystal.tec off\r\n"
-                 "  dac test on           — pause crystal TEC PID, force raw DAC=4095 (safe)\r\n"
-                 "  dac set   <code>      — 0-4095, raw DAC write (requires 'dac test on')\r\n"
-                 "  polarity heat         — POLARITY pin HIGH (requires 'dac test on')\r\n"
-                 "  polarity cool         — POLARITY pin LOW  (requires 'dac test on')\r\n"
-                 "  dac test off          — force raw DAC=4095, resume PID control\r\n"
+                 "  dac test on           — pause crystal TEC PID\r\n"
+                 "  dac test off          — resume crystal TEC PID\r\n"
+                 "  dac set <val>         — -1.0 - 1.0, write dac value(requires 'dac test on')\r\n"
+                //  "  polarity heat         — POLARITY pin HIGH (requires 'dac test on')\r\n"
+                //  "  polarity cool         — POLARITY pin LOW  (requires 'dac test on')\r\n"
                  "  status\r\n"
                  "  save\r\n"
                  "  help\r\n");
@@ -187,7 +187,7 @@ static void process_line(char *line)
                   (double)g_crystal_pid.Kd);
 
         if (g_tec_pg_fault)
-            cli_send("  TEC buck: FAULT — power-good low, output disabled\r\n");
+            cli_send("  TEC buck: FAULT — power-good low\r\n");
 
         TEC_Control_GetState(TEC_LASER, &temp, &output);
         cli_sendf("Laser  TEC: T=%7.4f C  SP=%7.4f  out=%.4f"
@@ -244,13 +244,13 @@ static void process_line(char *line)
 
     /* crystal.tec on / crystal.tec off */
     if (strcmp(line, "crystal.tec on") == 0) {
-        g_crystal_pid.enabled = 1;
+        BSP_TEC_Enable(TEC_CRYSTAL, 1);
+        BSP_TEC_Reset(TEC_CRYSTAL);
         cli_send("OK crystal TEC enabled\r\n");
         return;
     }
     if (strcmp(line, "crystal.tec off") == 0) {
-        
-        g_crystal_pid.enabled = 0;
+        BSP_TEC_Enable(TEC_CRYSTAL, 0);
         cli_send("OK crystal TEC disabled\r\n");
         return;
     }
@@ -275,59 +275,45 @@ static void process_line(char *line)
     /* dac test on / dac test off / dac set <code> / polarity heat / polarity cool */
     if (strcmp(line, "dac test on") == 0) {
         g_tec_manual_test = 1;
-        BSP_TEC_SetRawDAC(4095u);
-        BSP_TEC_SetRawPolarity(false);
-        BSP_TEC_Enable(TEC_CRYSTAL, 1);
-        cli_send("OK manual DAC test mode ON — crystal TEC PID paused, raw DAC forced to 4095"
-                 " (safe/inert), polarity forced to cool. Use 'dac set <code>' to sweep DOWN"
-                 " from there, checking FB and PG after every step. Do not jump toward 0."
-                 " Use 'polarity heat'/'polarity cool' to change direction.\r\n");
+        cli_send("OK manual DAC test mode ON - crystal TEC PID paused.\r\n");
         return;
     }
     if (strcmp(line, "dac test off") == 0) {
-        Laser_Control_Disable(); // TODO: Disable TEC 
-        BSP_TEC_Enable(TEC_CRYSTAL, 0);
-        BSP_TEC_SetRawDAC(4095u);
-        BSP_TEC_SetRawPolarity(false);
         g_tec_manual_test = 0;
-        cli_send("OK raw DAC forced to 4095, polarity forced to cool, manual test mode OFF"
-                 " — PID control resumed\r\n");
+        cli_send("OK — PID control resumed\r\n");
         return;
     }
-    if (strcmp(line, "polarity heat") == 0) {
+    // if (strcmp(line, "polarity heat") == 0) {
+    //     if (!g_tec_manual_test) {
+    //         cli_send("ERR: run 'dac test on' first\r\n");
+    //         return;
+    //     }
+    //     BSP_TEC_SetRawPolarity(true);
+    //     cli_send("OK polarity = heat (POLARITY pin HIGH)\r\n");
+    //     return;
+    // }
+    // if (strcmp(line, "polarity cool") == 0) {
+    //     if (!g_tec_manual_test) {
+    //         cli_send("ERR: run 'dac test on' first\r\n");
+    //         return;
+    //     }
+    //     BSP_TEC_SetRawPolarity(false);
+    //     cli_send("OK polarity = cool (POLARITY pin LOW)\r\n");
+    //     return;
+    // }
+
+    int dac_code;
+    if (sscanf(line, "dac set %i", &dac_code) == 1) {
         if (!g_tec_manual_test) {
             cli_send("ERR: run 'dac test on' first\r\n");
             return;
         }
-        BSP_TEC_SetRawPolarity(true);
-        cli_send("OK polarity = heat (POLARITY pin HIGH)\r\n");
-        return;
-    }
-    if (strcmp(line, "polarity cool") == 0) {
-        if (!g_tec_manual_test) {
-            cli_send("ERR: run 'dac test on' first\r\n");
+        if (dac_code < -4095 || dac_code > 4095) {
+            cli_send("ERR: value must be -4095 to 4095\r\n");
             return;
         }
-        BSP_TEC_SetRawPolarity(false);
-        cli_send("OK polarity = cool (POLARITY pin LOW)\r\n");
+        BSP_TEC_SetDac(TEC_CRYSTAL, (float)dac_code / 4095.0f);
         return;
-    }
-    {
-        unsigned dac_code;
-        if (sscanf(line, "dac set %u", &dac_code) == 1) {
-            if (!g_tec_manual_test) {
-                cli_send("ERR: run 'dac test on' first\r\n");
-                return;
-            }
-            if (dac_code > 4095u) {
-                cli_send("ERR: code must be 0-4095\r\n");
-                return;
-            }
-            BSP_TEC_SetRawDAC((uint16_t)dac_code);
-            cli_sendf("OK raw DAC = %u  -- measure FB now.  PG=%s\r\n",
-                      dac_code, BSP_TEC_PowerGood() ? "GOOD" : "LOW/FAULT");
-            return;
-        }
     }
 
     /* sim off */
@@ -433,7 +419,7 @@ static void process_line(char *line)
         }
         /* TEC PID params */
         PID_t *pid = NULL;
-        const char *param_name = NULL;
+        static char *param_name = NULL;
 
         if (strncmp(param, "crystal.", 8) == 0) {
             pid        = &g_crystal_pid;
@@ -619,5 +605,11 @@ void CLI_Process(void)
         }
     }
 
-    cli_sync_display();
+    // Sync display state at a fixed interval (50 ms) to avoid flooding the display with updates
+    static uint32_t last_tick = 0;
+    uint32_t now = HAL_GetTick();
+    if (now - last_tick >= 50) {
+        last_tick = now;
+        cli_sync_display();
+    }
 }

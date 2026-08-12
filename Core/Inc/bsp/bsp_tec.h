@@ -7,6 +7,7 @@
 typedef enum {
     TEC_CRYSTAL = 0,
     TEC_LASER   = 1,
+    TEC_CHANNELS = 2,
 } TecChannel_t;
 
 typedef enum {
@@ -20,16 +21,19 @@ typedef enum {
 /* Enable the TEC buck converter and zero the output. Call once per channel at startup. */
 void BSP_TEC_Init(TecChannel_t ch);
 
+/* Set TEC DAC value using signed integer. Polarity switch is handled by PSB_TEC_SetOutput */
+void BSP_TEC_SetDac(TecChannel_t ch, float dac_val);
+
 /* Reset the TEC polarity state. */
 void BSP_TEC_Reset(TecChannel_t ch);
 
 /* Set buck converter enable state*/
 void BSP_TEC_Enable(TecChannel_t ch, uint8_t enable);
 
-/* Set TEC drive level.
+/* Set TEC drive level. Called 10 times per second by TEC_Control_Tick() for each channel.
  * value ∈ [-1.0, +1.0]: sign selects direction via the POLARITY GPIO,
  * magnitude maps to the internal DAC amplitude output. */
-void BSP_TEC_SetOutput(TecChannel_t ch, float value);
+void BSP_TEC_SetOutput(TecChannel_t ch);
 
 /* Zero the output and disable the buck converter. */
 void BSP_TEC_Disable(TecChannel_t ch);

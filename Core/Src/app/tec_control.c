@@ -65,28 +65,29 @@ void TEC_Control_Tick(void)
      * raw code the sweep just set, on the very next 100 ms tick. */
 
     g_tec_pg_fault = !BSP_TEC_PowerGood(); /* status display only, no action taken */
-     if (!g_tec_manual_test && g_crystal_pid.enabled) {
-        BSP_TEC_SetOutput(TEC_CRYSTAL, s_crystal_output);
 
-        // Print fault state on CLI if changed
-        if (g_tec_pg_fault) {
-            if (g_tec_pg_fault_pending == 0) {
-                g_tec_pg_fault_pending = 1;
-            }
-        } else {
-            if (g_tec_pg_fault_pending == 2) {
-                g_tec_pg_fault_pending = 3;
-            } else if (g_tec_pg_fault_pending != 3) {
-                g_tec_pg_fault_pending = 0;
-            }
+    // Print fault state on CLI if changed
+    if (g_tec_pg_fault) {
+        if (g_tec_pg_fault_pending == 0) {
+            g_tec_pg_fault_pending = 1;
         }
- 
     } else {
-        PID_Reset(&g_crystal_pid);
-        BSP_TEC_Reset(TEC_CRYSTAL);
+        if (g_tec_pg_fault_pending == 2) {
+            g_tec_pg_fault_pending = 3;
+        } else if (g_tec_pg_fault_pending != 3) {
+            g_tec_pg_fault_pending = 0;
+        }
     }
 
-    BSP_TEC_SetOutput(TEC_LASER, s_laser_output);
+    if (g_tec_manual_test) {
+        // DAC test mode
+        PID_Reset(&g_crystal_pid);
+    } else {
+        // Control mode
+        BSP_TEC_SetDac(TEC_CRYSTAL, s_crystal_output); 
+    }
+
+    BSP_TEC_SetOutput(TEC_LASER);
 
     /* Laser temperature protection — only runs when laser is enabled */
     if (Laser_Control_GetState()->enabled) {

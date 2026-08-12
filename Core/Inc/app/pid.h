@@ -18,7 +18,6 @@ typedef struct {
     double integral;
     float  prev_error;
     float  d_filtered;
-    uint8_t enabled;
 } PID_t;
 
 void  PID_Init(PID_t *pid,

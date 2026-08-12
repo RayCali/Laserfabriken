@@ -3,6 +3,7 @@
 #include "dac.h"
 #include "stm32g4xx_hal.h"
 #include <stdint.h>
+#include <assert.h>
 
 /*
  * TEC control — UGN board.
@@ -18,72 +19,69 @@
  * Enable:    TEC_EN GPIO (PC5) — drives M5.EN on the buck converter.
  */
 
-/* ── Internal DAC helper ────────────────────────────────────────────────────── */
+// /* ── Internal DAC helper ────────────────────────────────────────────────────── */
 
-static void internal_dac_set(TecChannel_t ch, uint16_t code_12bit)
-{
-    uint32_t dac_ch = (ch == TEC_CRYSTAL) ? BSP_DAC_CH_CRYSTAL : BSP_DAC_CH_LASER;
-    /* Buck converter output is inversely proportional to VDAC.
-     * Invert so that higher |output| → more TEC current. */
-    uint16_t inverted = 4095u - code_12bit;
-    HAL_DAC_SetValue(BSP_DAC, dac_ch, DAC_ALIGN_12B_R, inverted);
-    HAL_DAC_Start(BSP_DAC, dac_ch);
-}
+// static void internal_dac_set(const TecChannel_t ch, uint16_t code_12bit)
+// {
+//     uint32_t dac_ch = (ch == TEC_CRYSTAL) ? BSP_DAC_CH_CRYSTAL : BSP_DAC_CH_LASER;
+//     /* Buck converter output is inversely proportional to VDAC.
+//      * Invert so that higher |output| → more TEC current. */
+//     uint16_t inverted = 4095u - code_12bit;
+//     HAL_DAC_SetValue(BSP_DAC, dac_ch, DAC_ALIGN_12B_R, inverted);
+//     HAL_DAC_Start(BSP_DAC, dac_ch);
+// }
 
 
 /* ── Static variables ────────────────────────────────────────────────────────── */
 
-static uint8_t polarity_state_ch[2] = { POLARITY_INIT, POLARITY_INIT };
+static uint8_t _polarity_state_ch[TEC_CHANNELS] = { POLARITY_INIT, POLARITY_INIT };
+static float _dac_val[TEC_CHANNELS] = { 0, 0 };
+static uint8_t _tec_enabled[TEC_CHANNELS] = { 0, 0 };
 
 /* ── Public API ──────────────────────────────────────────────────────────────── */
 
-void BSP_TEC_Init(TecChannel_t ch)
+void BSP_TEC_Init(const TecChannel_t ch)
 {
-    /* Only one physical TEC channel on UGN (Crystal).
-     * Laser TEC channel is a no-op here — Spudkortet will implement it. */
-    if (ch != TEC_CRYSTAL)
-        return;
+    assert(ch < TEC_CHANNELS);
 
-    /* Disable buck converter */
-    BSP_TEC_Enable(TEC_CRYSTAL, 0);
-
-    /* Start with zero drive and forward polarity */
-    BSP_TEC_SetRawPolarity(false);
-    BSP_TEC_SetRawDAC(4095u);
-
+    BSP_TEC_Reset(ch);
+    BSP_TEC_SetDac(ch, 0.0f);
+    BSP_TEC_Enable(ch, 0);
 }
 
-void BSP_TEC_Enable(TecChannel_t ch, uint8_t enable)
+void BSP_TEC_Enable(const TecChannel_t ch, uint8_t enable)
 {
-    if (ch == TEC_CRYSTAL) {
-        /* Enable CRYSTAL buck converter */
-        if (enable) {
-            HAL_GPIO_WritePin(BSP_TEC_EN_PORT, BSP_TEC_EN_PIN, GPIO_PIN_SET);
-        } else {
-            HAL_GPIO_WritePin(BSP_TEC_EN_PORT, BSP_TEC_EN_PIN, GPIO_PIN_RESET);
-        }
+    assert(ch < TEC_CHANNELS);
+
+    _tec_enabled[ch] = enable;
+    if (!enable) {
+        /* Disable buck converter and zero the output. */
+        HAL_GPIO_WritePin(TEC_EN_GPIO_Port, TEC_EN_Pin, GPIO_PIN_RESET);
     }
 }
 
-void BSP_TEC_Reset(TecChannel_t ch)
+void BSP_TEC_Reset(const TecChannel_t ch)
 {
-    polarity_state_ch[ch] = POLARITY_INIT;
+    _polarity_state_ch[ch] = POLARITY_INIT;
 }
 
+void BSP_TEC_SetDac(TecChannel_t ch, float dac_val)
+{
+    _dac_val[ch] = dac_val;
+}
 
-void BSP_TEC_SetOutput(TecChannel_t ch, float value)
+void BSP_TEC_SetOutput(TecChannel_t ch)
 // Executed 10 times per second
 {
-    if (ch != TEC_CRYSTAL)
+    if (ch >= TEC_CHANNELS)
         return;
 
-    uint8_t polarity_state = polarity_state_ch[ch];
+    float value = _dac_val[ch];
+    uint8_t polarity_state = _polarity_state_ch[ch];
     uint16_t dac_code;
 
     // Set polarity after initialization
     if (polarity_state == POLARITY_RUN) {
-        /* Enable buck converter */
-        BSP_TEC_Enable(ch, 1);
         if (value >= 0.0f) {
             polarity_state = POLARITY_HEAT;
             BSP_TEC_SetRawPolarity(true);
@@ -91,6 +89,12 @@ void BSP_TEC_SetOutput(TecChannel_t ch, float value)
             polarity_state = POLARITY_COOL;
             BSP_TEC_SetRawPolarity(false);
         }
+
+        /* Write enable pin */
+        if (_tec_enabled[ch]) {
+            HAL_GPIO_WritePin(TEC_EN_GPIO_Port, TEC_EN_Pin, GPIO_PIN_SET);
+        }
+
     } else if (((value >= 0.0f) && (polarity_state == POLARITY_COOL)) ||
         ((value < 0.0f) && (polarity_state == POLARITY_HEAT))) {
         // Check if the polarity has changed and reset to INIT if it has    
@@ -103,35 +107,36 @@ void BSP_TEC_SetOutput(TecChannel_t ch, float value)
         BSP_TEC_SetRawDAC(4095u);
 
         /* Disable buck converter */
-        BSP_TEC_Enable(ch, 0);
+        HAL_GPIO_WritePin(TEC_EN_GPIO_Port, TEC_EN_Pin, GPIO_PIN_RESET);
         polarity_state = POLARITY_RUN;
     } else {
         if (value < 0.0f) {
             value = -value; // Make value positive for DAC calculation
         }
         if (value > 1.0f) value = 1.0f;
+
         dac_code = 4095u - (uint16_t)(value * 4095.0f);
         BSP_TEC_SetRawDAC(dac_code);
     }
-    polarity_state_ch[ch] = polarity_state;
+    _polarity_state_ch[ch] = polarity_state;
 }
 
-void BSP_TEC_Disable(TecChannel_t ch)
-{
-    if (ch != TEC_CRYSTAL)
-        return;
+// void BSP_TEC_Disable(TecChannel_t ch)
+// {
+//     if (ch != TEC_CRYSTAL)
+//         return;
 
-    /* Zero the TEC drive only -- do NOT touch EN here. The TPS563252 has
-     * its own non-latching UVLO/thermal protection and hiccup-mode UVP
-     * recovery; it retries on its own schedule regardless of what we do.
-     * Toggling EN off on a PG fault with no corresponding re-enable
-     * elsewhere previously left EN latched off permanently after the
-     * first fault, since nothing could turn it back on once the buck
-     * could no longer run. Leaving EN alone avoids that deadlock -- our
-     * job is only to make sure the TEC gets zero drive while PG isn't
-     * confirmed good, not to manage the buck's own fault recovery. */
-    internal_dac_set(TEC_CRYSTAL, 0);
-}
+//     /* Zero the TEC drive only -- do NOT touch EN here. The TPS563252 has
+//      * its own non-latching UVLO/thermal protection and hiccup-mode UVP
+//      * recovery; it retries on its own schedule regardless of what we do.
+//      * Toggling EN off on a PG fault with no corresponding re-enable
+//      * elsewhere previously left EN latched off permanently after the
+//      * first fault, since nothing could turn it back on once the buck
+//      * could no longer run. Leaving EN alone avoids that deadlock -- our
+//      * job is only to make sure the TEC gets zero drive while PG isn't
+//      * confirmed good, not to manage the buck's own fault recovery. */
+//     internal_dac_set(TEC_CRYSTAL, 0);
+// }
 
 bool BSP_TEC_PowerGood(void)
 {
