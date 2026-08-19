@@ -1,5 +1,6 @@
 #include "cli.h"
 #include "bsp_config.h"
+#include "bsp_temp.h"
 #include "tec_control.h"
 #include "laser_control.h"
 #include "params.h"
@@ -306,6 +307,11 @@ static void process_line(char *line)
                  "  set crystal.wavelength <val>  (nm) — sets crystal setpoint via T=(λ-m)/k\r\n"
                  "  set crystal.k          <val>  (nm/C, slope)\r\n"
                  "  set crystal.m          <val>  (nm, offset)\r\n"
+                 "  set temp.vref          <val>  (V)    — NTC divider reference\r\n"
+                 "  set temp.rseries       <val>  (ohm)  — NTC series resistor\r\n"
+                 "  set temp.sh_a          <val>         — Steinhart-Hart A\r\n"
+                 "  set temp.sh_b          <val>         — Steinhart-Hart B\r\n"
+                 "  set temp.sh_c          <val>         — Steinhart-Hart C\r\n"
                  "  set laser.kp           <val>\r\n"
                  "  set laser.ki           <val>\r\n"
                  "  set laser.kd           <val>\r\n"
@@ -364,6 +370,10 @@ static void process_line(char *line)
 
         if (g_tec_pg_fault)
             cli_send("  TEC buck: FAULT — power-good low\r\n");
+
+        cli_sendf("NTC: Vref=%.3f V  Rseries=%.1f ohm  A=%.6e  B=%.6e  C=%.6e\r\n",
+                  (double)g_ntc_vref_v, (double)g_ntc_rseries_ohm,
+                  (double)g_ntc_sh_a, (double)g_ntc_sh_b, (double)g_ntc_sh_c);
 
         TEC_Control_GetState(TEC_LASER, &temp, &output);
         cli_sendf("Laser  TEC: T=%7.4f C  SP=%7.4f  out=%.4f"
@@ -580,6 +590,40 @@ static void process_line(char *line)
             return;
         }
 
+        /* NTC calibration -- see bsp_temp.h/bsp_temp.c. Persisted like
+         * everything else above (Params_MarkDirty()), so a bench calibration
+         * survives a reboot instead of needing to be redone every time. */
+        if (strcmp(param, "temp.vref") == 0) {
+            g_ntc_vref_v = val;
+            cli_sendf("OK temp.vref = %.4f V\r\n", (double)val);
+            Params_MarkDirty();
+            return;
+        }
+        if (strcmp(param, "temp.rseries") == 0) {
+            g_ntc_rseries_ohm = val;
+            cli_sendf("OK temp.rseries = %.1f ohm\r\n", (double)val);
+            Params_MarkDirty();
+            return;
+        }
+        if (strcmp(param, "temp.sh_a") == 0) {
+            g_ntc_sh_a = val;
+            cli_sendf("OK temp.sh_a = %.6e\r\n", (double)val);
+            Params_MarkDirty();
+            return;
+        }
+        if (strcmp(param, "temp.sh_b") == 0) {
+            g_ntc_sh_b = val;
+            cli_sendf("OK temp.sh_b = %.6e\r\n", (double)val);
+            Params_MarkDirty();
+            return;
+        }
+        if (strcmp(param, "temp.sh_c") == 0) {
+            g_ntc_sh_c = val;
+            cli_sendf("OK temp.sh_c = %.6e\r\n", (double)val);
+            Params_MarkDirty();
+            return;
+        }
+
         /* Laser diode current control (checked before TEC PID to avoid ambiguity) */
         if (strcmp(param, "laser.current") == 0) {
             Laser_Control_SetCurrent(val);
@@ -667,6 +711,7 @@ static void process_line(char *line)
             if (pid == &g_laser_pid)
                 TEC_LaserTempGuard_Reset();
             cli_sendf("OK %s = %.4f C (integral reset)\r\n", param, (double)val);
+            Params_MarkDirty();
         } else {
             cli_send("ERR: unknown parameter\r\n");
         }
@@ -693,7 +738,9 @@ static void process_line(char *line)
  * Sentinel "impossible" initial values force a first sync on boot, once
  * Params_Load() has restored the real values -- see main.c USER CODE 2. */
 static uint16_t s_sync_power_pct  = 0xFFFFu;
+static uint32_t s_sync_power_pct_last_ms = 0u;
 static float    s_sync_wavelength = -1.0f;
+static uint32_t s_sync_wavelength_last_ms = 0u;
 static uint8_t  s_sync_laser_on   = 0xFFu;
 static uint8_t  s_sync_5v_on      = 0xFFu;
 static uint8_t  s_sync_crystal_tec_on = 0xFFu;
@@ -703,6 +750,7 @@ static float    s_sync_crystal_output = -1000.0f;
  * device.mode block below, and by process_line()'s 'display mode ...'
  * commands) are declared earlier in the file, near s_bridge_active. */
 static float    s_sync_crystal_setpoint = -1000.0f;
+static uint32_t s_sync_crystal_setpoint_last_ms = 0u;
 static float    s_sync_crystal_tec_v = -1000.0f;
 
 /* Resets the sync state back to the same impossible sentinel values used
@@ -714,7 +762,9 @@ static float    s_sync_crystal_tec_v = -1000.0f;
 static void cli_force_display_resync(void)
 {
     s_sync_power_pct      = 0xFFFFu;
+    s_sync_power_pct_last_ms = (uint32_t)(0u - 1000u);
     s_sync_wavelength     = -1.0f;
+    s_sync_wavelength_last_ms = (uint32_t)(0u - 1000u);
     s_sync_laser_on       = 0xFFu;
     s_sync_5v_on          = 0xFFu;
     s_sync_crystal_tec_on = 0xFFu;
@@ -722,6 +772,7 @@ static void cli_force_display_resync(void)
     s_sync_crystal_output = -1000.0f;
     s_sync_mode_last_ms    = (uint32_t)(0u - 1000u);
     s_sync_crystal_setpoint = -1000.0f;
+    s_sync_crystal_setpoint_last_ms = (uint32_t)(0u - 1000u);
     s_sync_crystal_tec_v    = -1000.0f;
 }
 
@@ -766,13 +817,17 @@ static void cli_sync_display(void)
         BSP_DISPLAY_Send(buf, strlen(buf));
     }
 
-    if (ls->power_pct != s_sync_power_pct) {
+    if (ls->power_pct != s_sync_power_pct ||
+        HAL_GetTick() - s_sync_power_pct_last_ms >= 1000u) {
         s_sync_power_pct = ls->power_pct;
+        s_sync_power_pct_last_ms = HAL_GetTick();
         snprintf(buf, sizeof(buf), "set laser.power %u\r\n", (unsigned)ls->power_pct);
         BSP_DISPLAY_Send(buf, strlen(buf));
     }
-    if (wavelength != s_sync_wavelength) {
+    if (wavelength != s_sync_wavelength ||
+        HAL_GetTick() - s_sync_wavelength_last_ms >= 1000u) {
         s_sync_wavelength = wavelength;
+        s_sync_wavelength_last_ms = HAL_GetTick();
         snprintf(buf, sizeof(buf), "set crystal.wavelength %.2f\r\n", (double)wavelength);
         BSP_DISPLAY_Send(buf, strlen(buf));
     }
@@ -801,8 +856,10 @@ static void cli_sync_display(void)
      * PID-parameter handler in process_line() already applies that
      * correctly (cli.c ~line 626), so this push doubles as the confirmation
      * echo back to the display once it does. */
-    if (g_crystal_pid.setpoint != s_sync_crystal_setpoint) {
+    if (g_crystal_pid.setpoint != s_sync_crystal_setpoint ||
+        HAL_GetTick() - s_sync_crystal_setpoint_last_ms >= 1000u) {
         s_sync_crystal_setpoint = g_crystal_pid.setpoint;
+        s_sync_crystal_setpoint_last_ms = HAL_GetTick();
         snprintf(buf, sizeof(buf), "crystal.setpoint %.4f\r\n", (double)g_crystal_pid.setpoint);
         BSP_DISPLAY_Send(buf, strlen(buf));
     }
